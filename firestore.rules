@@ -1,0 +1,298 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Default-Deny Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened Global Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Entity Blueprint 1: UserProfile (/users/{userId})
+    function isValidUserProfile(data) {
+      return data.keys().hasAll([
+        'userId', 'displayName', 'targetExam', 'preferredLanguage',
+        'streakDays', 'xp', 'level', 'focusMinutes',
+        'physicsMastery', 'chemistryMastery', 'mathsMastery',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'displayName', 'targetExam', 'preferredLanguage',
+        'streakDays', 'xp', 'level', 'focusMinutes',
+        'physicsMastery', 'chemistryMastery', 'mathsMastery',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+      data.targetExam is string && data.targetExam.size() <= 40 &&
+      (data.targetExam == 'JEE Main 2027' || data.targetExam == 'JEE Advanced 2027' || data.targetExam == 'JEE Main 2028') &&
+      data.preferredLanguage is string && data.preferredLanguage.size() <= 20 &&
+      (data.preferredLanguage == 'English' || data.preferredLanguage == 'Hinglish') &&
+      data.streakDays is int && data.streakDays >= 0 && data.streakDays <= 3650 &&
+      data.xp is int && data.xp >= 0 && data.xp <= 10000000 &&
+      data.level is int && data.level >= 1 && data.level <= 1000 &&
+      data.focusMinutes is int && data.focusMinutes >= 0 && data.focusMinutes <= 1000000 &&
+      data.physicsMastery is int && data.physicsMastery >= 0 && data.physicsMastery <= 100 &&
+      data.chemistryMastery is int && data.chemistryMastery >= 0 && data.chemistryMastery <= 100 &&
+      data.mathsMastery is int && data.mathsMastery >= 0 && data.mathsMastery <= 100 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Entity Blueprint 2: StudyMaterial (/materials/{materialId})
+    function isValidStudyMaterial(data) {
+      return data.keys().hasAll([
+        'userId', 'title', 'subject', 'chapter', 'sourceType',
+        'sourceRef', 'pageCount', 'currentPage', 'contentSummary',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'title', 'subject', 'chapter', 'sourceType',
+        'sourceRef', 'pageCount', 'currentPage', 'contentSummary',
+        'createdAt', 'updatedAt'
+      ]) &&
+      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+      data.subject is string && data.subject.size() <= 30 &&
+      (data.subject == 'Physics' || data.subject == 'Chemistry' || data.subject == 'Mathematics') &&
+      data.chapter is string && data.chapter.size() >= 1 && data.chapter.size() <= 120 &&
+      data.sourceType is string && data.sourceType.size() <= 20 &&
+      (data.sourceType == 'pdf' || data.sourceType == 'photo' || data.sourceType == 'youtube' || data.sourceType == 'text' || data.sourceType == 'drive') &&
+      data.sourceRef is string && data.sourceRef.size() <= 500 &&
+      data.pageCount is int && data.pageCount >= 1 && data.pageCount <= 500 &&
+      data.currentPage is int && data.currentPage >= 1 && data.currentPage <= 500 &&
+      data.contentSummary is string && data.contentSummary.size() <= 20000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Entity Blueprint 3: StudyTask (/tasks/{taskId})
+    function isValidStudyTask(data) {
+      return data.keys().hasAll([
+        'userId', 'title', 'subject', 'dueLabel', 'completed', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'title', 'subject', 'dueLabel', 'completed', 'createdAt', 'updatedAt'
+      ]) &&
+      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+      data.subject is string && data.subject.size() <= 30 &&
+      (data.subject == 'Physics' || data.subject == 'Chemistry' || data.subject == 'Mathematics') &&
+      data.dueLabel is string && data.dueLabel.size() <= 50 &&
+      data.completed is bool &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Entity Blueprint 4: SavedCreation (/creations/{creationId})
+    function isValidSavedCreation(data) {
+      return data.keys().hasAll([
+        'userId', 'title', 'prompt', 'category', 'subject', 'sourceLabel', 'payload', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'title', 'prompt', 'category', 'subject', 'sourceLabel', 'payload', 'createdAt', 'updatedAt'
+      ]) &&
+      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+      data.prompt is string && data.prompt.size() >= 1 && data.prompt.size() <= 1000 &&
+      data.category is string && data.category.size() <= 30 &&
+      (data.category == 'diagram' || data.category == 'visual' || data.category == 'animated' || data.category == 'three3d') &&
+      data.subject is string && data.subject.size() <= 30 &&
+      (data.subject == 'Physics' || data.subject == 'Chemistry' || data.subject == 'Mathematics' || data.subject == 'All') &&
+      data.sourceLabel is string && data.sourceLabel.size() <= 200 &&
+      data.payload is string && data.payload.size() <= 100000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Entity Blueprint 5: MockAttempt (/mockAttempts/{attemptId})
+    function isValidMockAttempt(data) {
+      return data.keys().hasAll([
+        'userId', 'mockTitle', 'examType', 'score', 'maxMarks', 'accuracy',
+        'durationMinutes', 'correctCount', 'incorrectCount', 'skippedCount',
+        'focusEvents', 'summaryReport', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'mockTitle', 'examType', 'score', 'maxMarks', 'accuracy',
+        'durationMinutes', 'correctCount', 'incorrectCount', 'skippedCount',
+        'focusEvents', 'summaryReport', 'createdAt', 'updatedAt'
+      ]) &&
+      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.mockTitle is string && data.mockTitle.size() >= 1 && data.mockTitle.size() <= 200 &&
+      data.examType is string && data.examType.size() <= 20 &&
+      (data.examType == 'Main' || data.examType == 'Advanced') &&
+      data.score is int && data.score >= -100 && data.score <= 360 &&
+      data.maxMarks is int && data.maxMarks >= 10 && data.maxMarks <= 360 &&
+      (data.accuracy is int || data.accuracy is float) && data.accuracy >= 0 && data.accuracy <= 100 &&
+      data.durationMinutes is int && data.durationMinutes >= 0 && data.durationMinutes <= 360 &&
+      data.correctCount is int && data.correctCount >= 0 && data.correctCount <= 200 &&
+      data.incorrectCount is int && data.incorrectCount >= 0 && data.incorrectCount <= 200 &&
+      data.skippedCount is int && data.skippedCount >= 0 && data.skippedCount <= 200 &&
+      data.focusEvents is int && data.focusEvents >= 0 && data.focusEvents <= 1000 &&
+      data.summaryReport is string && data.summaryReport.size() <= 20000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Entity Blueprint 6: RevisionCard (/revisions/{revisionId})
+    function isValidRevisionCard(data) {
+      return data.keys().hasAll([
+        'userId', 'chapter', 'subject', 'cardType', 'title', 'body', 'trapOrTip', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'chapter', 'subject', 'cardType', 'title', 'body', 'trapOrTip', 'createdAt', 'updatedAt'
+      ]) &&
+      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.chapter is string && data.chapter.size() >= 1 && data.chapter.size() <= 120 &&
+      data.subject is string && data.subject.size() <= 30 &&
+      (data.subject == 'Physics' || data.subject == 'Chemistry' || data.subject == 'Mathematics') &&
+      data.cardType is string && data.cardType.size() <= 30 &&
+      (data.cardType == 'flashcard' || data.cardType == 'sticky' || data.cardType == 'mindmap' || data.cardType == 'summary' || data.cardType == 'mistake' || data.cardType == 'formula') &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+      data.body is string && data.body.size() >= 1 && data.body.size() <= 5000 &&
+      data.trapOrTip is string && data.trapOrTip.size() <= 1000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 1. /users/{userId}
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(userId) && userId == request.auth.uid &&
+        isValidUserProfile(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(userId) && userId == request.auth.uid &&
+        isValidUserProfile(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'targetExam', 'preferredLanguage',
+          'streakDays', 'xp', 'level', 'focusMinutes',
+          'physicsMastery', 'chemistryMastery', 'mathsMastery', 'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(userId) && userId == request.auth.uid;
+    }
+
+    // 2. /materials/{materialId}
+    match /materials/{materialId} {
+      allow get: if isSignedIn() && isValidId(materialId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(materialId) &&
+        isValidStudyMaterial(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(materialId) &&
+        isValidStudyMaterial(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'chapter', 'currentPage', 'contentSummary', 'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(materialId) && existing().userId == request.auth.uid;
+    }
+
+    // 3. /tasks/{taskId}
+    match /tasks/{taskId} {
+      allow get: if isSignedIn() && isValidId(taskId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(taskId) &&
+        isValidStudyTask(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(taskId) &&
+        isValidStudyTask(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'subject', 'dueLabel', 'completed', 'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(taskId) && existing().userId == request.auth.uid;
+    }
+
+    // 4. /creations/{creationId}
+    match /creations/{creationId} {
+      allow get: if isSignedIn() && isValidId(creationId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(creationId) &&
+        isValidSavedCreation(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(creationId) &&
+        isValidSavedCreation(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'prompt', 'payload', 'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(creationId) && existing().userId == request.auth.uid;
+    }
+
+    // 5. /mockAttempts/{attemptId}
+    match /mockAttempts/{attemptId} {
+      allow get: if isSignedIn() && isValidId(attemptId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(attemptId) &&
+        isValidMockAttempt(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(attemptId) &&
+        isValidMockAttempt(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'summaryReport', 'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(attemptId) && existing().userId == request.auth.uid;
+    }
+
+    // 6. /revisions/{revisionId}
+    match /revisions/{revisionId} {
+      allow get: if isSignedIn() && isValidId(revisionId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(revisionId) &&
+        isValidRevisionCard(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(revisionId) &&
+        isValidRevisionCard(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'body', 'trapOrTip', 'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(revisionId) && existing().userId == request.auth.uid;
+    }
+  }
+}
