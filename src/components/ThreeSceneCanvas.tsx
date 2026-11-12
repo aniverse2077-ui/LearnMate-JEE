@@ -490,18 +490,25 @@ export const ThreeSceneCanvas: React.FC<ThreeSceneCanvasProps> = ({ preset, anim
         const dt = Math.min(clock.getDelta(), 0.05);
         controls.update();
 
-        if (stateRef.current.animateMotion && dynamicBlockGroup) {
+        if (stateRef.current.animateMotion) {
           const t = clock.getElapsedTime();
-          if (stateRef.current.preset === 'VSEPR') {
-            dynamicBlockGroup.rotation.y = t * 0.65;
-          } else if (stateRef.current.preset === 'Incline') {
-            const slideOffset = Math.sin(t * 1.8) * 0.55;
-            const rad = THREE.MathUtils.degToRad(stateRef.current.angleDeg);
-            dynamicBlockGroup.position.x = -slideOffset * Math.cos(rad);
-            dynamicBlockGroup.position.y =
-              0.14 + 2.1 * Math.sin(rad) - slideOffset * Math.sin(rad);
+          if (dynamicBlockGroup) {
+            if (stateRef.current.preset === 'VSEPR') {
+              dynamicBlockGroup.rotation.y = t * 0.75;
+              dynamicBlockGroup.rotation.x = Math.sin(t * 0.9) * 0.2;
+            } else if (stateRef.current.preset === 'Incline') {
+              const slideOffset = Math.sin(t * 1.8) * 0.55;
+              const rad = THREE.MathUtils.degToRad(stateRef.current.angleDeg);
+              dynamicBlockGroup.position.x = -slideOffset * Math.cos(rad);
+              dynamicBlockGroup.position.y =
+                0.14 + 2.1 * Math.sin(rad) - slideOffset * Math.sin(rad);
+            }
+          } else {
+            subjectRoot.rotation.y = Math.sin(t * 0.85) * 0.35;
           }
           renderDirty = true;
+        } else {
+          subjectRoot.rotation.y = 0;
         }
 
         renderer.render(scene, camera);
@@ -566,8 +573,13 @@ export const ThreeSceneCanvas: React.FC<ThreeSceneCanvasProps> = ({ preset, anim
       />
 
       {/* Minimal Top-Left Spec Title */}
-      <div className="absolute top-3 left-3 px-3 py-1.5 rounded-lg bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 pointer-events-none">
-        3D Interactive Simulation · {preset} (θ = {angleDeg}°)
+      <div className="absolute top-3 left-3 px-3 py-1.5 rounded-lg bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 pointer-events-none flex items-center gap-2">
+        <span>3D Interactive Simulation · {preset} (θ = {angleDeg}°)</span>
+        {animateMotion && (
+          <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+            Live Physics Motion
+          </span>
+        )}
       </div>
 
       {/* Collapsible Unified Bottom Control Dock (Zero Side-Panel Clutter, Solid Surface Over WebGL) */}

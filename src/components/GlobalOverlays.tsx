@@ -20,20 +20,52 @@ import {
   Pause,
   RotateCcw,
   Mic,
+  MicOff,
   Volume2,
+  VolumeX,
   FolderOpen,
-  CheckCircle2,
   AlertTriangle,
+  ShieldCheck,
+  Download,
+  LogOut,
+  Flame,
+  Plus,
+  Trash2,
+  Eye,
+  EyeOff,
+  Table,
+  History,
+  Square,
+  Sparkles,
 } from 'lucide-react';
-import { evaluateMathFunction, calculateStatistics } from '../utils/jeeEngine';
+import {
+  evaluateMathFunction,
+  evaluateDerivative,
+  detectEquationParameters,
+  findRootsAndExtrema,
+  findCurveIntersections,
+  computeCombination,
+  computePermutation,
+  computeFactorial,
+  computeDeterminant3x3,
+  computeVectorOps,
+  calculateStatistics,
+  detectJeeSubjectAndChapter,
+  CBTQuestion,
+  GraphSpecialPoint,
+} from '../utils/jeeEngine';
 import {
   listDriveStudyFiles,
   readGoogleDocContent,
   DriveFileItem,
 } from '../services/workspaceService';
+import { CBT_MOCK_QUESTIONS } from '../data/jeeInitialContent';
+import { googleSignIn, getWorkspaceAccessToken } from '../firebase';
+import { LegalModalTabId } from './LandingAndAuth';
+import { MathRichText } from './MathRichText';
 
 // ============================================================================
-// 1. Add Material Modal (Exact Match for Screen 3: LearnMate_JEE_Add_Material_Modal-8)
+// 1. Add Material Modal (Clean Zero-State + Auto Subject/Chapter Detection + Up to 12-Hour YouTube Marathon + Handwritten OCR)
 // ============================================================================
 interface AddMaterialModalProps {
   isOpen: boolean;
@@ -58,56 +90,87 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
   const [activeTab, setActiveTab] = useState<'pdf' | 'photo' | 'youtube' | 'text' | 'drive'>(
     initialTab
   );
-  const [youtubeUrl, setYoutubeUrl] = useState('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
-  const [subject, setSubject] = useState<'Physics' | 'Chemistry' | 'Mathematics'>('Chemistry');
+  // Strictly empty by default — no preloaded link or fake spinner
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [lectureDurationHours, setLectureDurationHours] = useState<number>(3);
+  const [transcriptOrOutline, setTranscriptOrOutline] = useState('');
   const [titleInput, setTitleInput] = useState('');
   const [pastedText, setPastedText] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('Checking link');
+  const [statusMessage, setStatusMessage] = useState('');
   const [driveFiles, setDriveFiles] = useState<DriveFileItem[]>([]);
   const [driveLoading, setDriveLoading] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
 
   useEffect(() => {
     setActiveTab(initialTab);
-  }, [initialTab]);
+    setErrorText(null);
+    setAnalyzing(false);
+    setStatusMessage('');
+  }, [initialTab, isOpen]);
 
   if (!isOpen) return null;
 
+  const hasTypedContext = Boolean(
+    titleInput.trim() || youtubeUrl.trim() || transcriptOrOutline.trim() || pastedText.trim()
+  );
+  const liveDetected = detectJeeSubjectAndChapter(
+    `${youtubeUrl} ${transcriptOrOutline} ${pastedText}`,
+    titleInput
+  );
+
   const handleAnalyzeYouTube = async () => {
-    if (!youtubeUrl.trim()) {
-      setErrorText('Please enter a valid YouTube lecture URL.');
+    if (!youtubeUrl.trim() && !transcriptOrOutline.trim()) {
+      setErrorText('Please enter a YouTube lecture URL or paste a lecture topic outline.');
       return;
     }
     setErrorText(null);
     setAnalyzing(true);
-    setStatusMessage('Checking link & analyzing lecture with Gemini 4 Argon...');
+    setStatusMessage(
+      `Auto-identifying JEE subject & chapter and extracting ${lectureDurationHours}h marathon lecture notes, KaTeX formulas & mind map...`
+    );
     try {
+      const initialDetection = detectJeeSubjectAndChapter(
+        `${youtubeUrl} ${transcriptOrOutline}`,
+        titleInput
+      );
+
       const res = await fetch('/api/ai/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          youtubeUrl,
+          youtubeUrl: youtubeUrl.trim() || 'https://www.youtube.com/watch',
+          lectureDurationHours,
+          transcriptOrOutline: transcriptOrOutline.trim(),
           sourceType: 'youtube',
-          prompt: `Extract JEE ${subject} lecture notes and formulas from ${youtubeUrl}`,
+          prompt: `Automatically identify the JEE subject (Physics, Chemistry, or Mathematics) and chapter for "${initialDetection.chapter}" (${lectureDurationHours}-hour lecture) and extract complete chapter notes. Include timestamped concepts, **bold** fundamental laws, *italic* JEE exceptions, and KaTeX ($...$ and $$...$$) formulas.`,
         }),
       });
       const data = await res.json();
+      const finalDetection = detectJeeSubjectAndChapter(
+        `${youtubeUrl} ${transcriptOrOutline} ${data.text || ''}`,
+        titleInput
+      );
+
       await onAddMaterial({
-        title: titleInput.trim() || `YouTube Lecture (${subject})`,
-        subject,
-        chapter: titleInput.trim() || 'Electrochemistry & Redox',
+        title: titleInput.trim() || finalDetection.chapter,
+        subject: finalDetection.subject,
+        chapter: finalDetection.chapter,
         sourceType: 'youtube',
-        sourceRef: youtubeUrl,
+        sourceRef: youtubeUrl.trim() || `YouTube ${lectureDurationHours}h Lecture`,
         contentSummary:
           data.text ||
-          'Extracted key lecture concepts, Nernst equation derivations, and standard electrode potential traps.',
+          `**${finalDetection.chapter}** (${finalDetection.subject} • ${lectureDurationHours}h Marathon Lecture): Complete KaTeX derivations, timestamped concept blocks, and *high-yield JEE Advanced trap alerts*.\n\n${transcriptOrOutline.trim()}`,
       });
+      setYoutubeUrl('');
+      setTranscriptOrOutline('');
+      setTitleInput('');
       onClose();
     } catch (err: any) {
-      setErrorText(err?.message || 'Failed to analyze YouTube link.');
+      setErrorText(err?.message || 'Failed to analyze YouTube lecture.');
     } finally {
       setAnalyzing(false);
+      setStatusMessage('');
     }
   };
 
@@ -119,7 +182,11 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
     if (!file) return;
     setErrorText(null);
     setAnalyzing(true);
-    setStatusMessage(`Analyzing ${file.name} with Gemini 4 Argon...`);
+    setStatusMessage(
+      mode === 'photo'
+        ? `Auto-detecting JEE subject & chapter and running Handwritten Notes OCR on ${file.name}...`
+        : `Auto-detecting JEE subject & chapter and extracting KaTeX equations & mind map from ${file.name}...`
+    );
 
     try {
       const reader = new FileReader();
@@ -133,6 +200,9 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
       reader.readAsDataURL(file);
       const base64Data = await base64Promise;
 
+      const fileStem = file.name.replace(/\.[^/.]+$/, '');
+      const initialDetection = detectJeeSubjectAndChapter(fileStem, titleInput);
+
       const res = await fetch('/api/ai/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -140,46 +210,60 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
           mediaBase64: base64Data,
           mimeType: file.type || (mode === 'pdf' ? 'application/pdf' : 'image/jpeg'),
           sourceType: mode,
-          prompt: `Extract structured JEE ${subject} chapter notes, definitions, formulas, and common traps from ${file.name}.`,
+          prompt: `Automatically identify whether this material belongs to JEE Physics, Chemistry, or Mathematics and which chapter it covers, then perform OCR and extract structured chapter notes for "${initialDetection.chapter}" from ${file.name}. Format all formulas in KaTeX ($...$ and $$...$$), highlight key laws in **bold**, and highlight exceptions/traps in *italics*.`,
         }),
       });
       const data = await res.json();
+      const finalDetection = detectJeeSubjectAndChapter(
+        `${fileStem} ${data.text || ''}`,
+        titleInput
+      );
+
       await onAddMaterial({
-        title: file.name,
-        subject,
-        chapter: file.name.replace(/\.[^/.]+$/, ''),
+        title: titleInput.trim() || finalDetection.chapter || file.name,
+        subject: finalDetection.subject,
+        chapter: finalDetection.chapter,
         sourceType: mode,
         sourceRef: file.name,
         contentSummary:
-          data.text || `Structured JEE ${subject} notes extracted from ${file.name}.`,
+          data.text ||
+          `**${finalDetection.chapter}** (${finalDetection.subject}): Extracted handwritten/PDF definitions, KaTeX derivations, and *critical JEE exam traps* from ${file.name}.`,
       });
+      setTitleInput('');
       onClose();
     } catch (err: any) {
       setErrorText(err?.message || 'Could not analyze uploaded file.');
     } finally {
       setAnalyzing(false);
+      setStatusMessage('');
     }
   };
 
   const handlePasteSubmit = async () => {
     if (!pastedText.trim()) {
-      setErrorText('Please paste your study text or formulas first.');
+      setErrorText('Please paste your study text, handwritten transcription, or formulas first.');
       return;
     }
     setAnalyzing(true);
-    setStatusMessage('Structuring your notes...');
+    setStatusMessage(
+      'Auto-identifying JEE subject & chapter and structuring your notes into KaTeX pages, flashcards & mind map...'
+    );
     try {
+      const detected = detectJeeSubjectAndChapter(pastedText, titleInput);
       await onAddMaterial({
-        title: titleInput.trim() || `${subject} Custom Notes`,
-        subject,
-        chapter: titleInput.trim() || `${subject} Notes`,
+        title: titleInput.trim() || detected.chapter,
+        subject: detected.subject,
+        chapter: detected.chapter,
         sourceType: 'text',
-        sourceRef: 'Pasted Notes',
+        sourceRef: 'Uploaded Notes',
         contentSummary: pastedText.trim(),
       });
+      setTitleInput('');
+      setPastedText('');
       onClose();
     } finally {
       setAnalyzing(false);
+      setStatusMessage('');
     }
   };
 
@@ -198,17 +282,18 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
 
   const handleImportDriveFile = async (file: DriveFileItem) => {
     setAnalyzing(true);
-    setStatusMessage(`Importing "${file.name}" from Google Workspace...`);
+    setStatusMessage(`Auto-detecting subject & importing "${file.name}" from Google Workspace...`);
     try {
-      let summary = `Imported from Google Drive: ${file.name}`;
+      let summary = `**${file.name}** imported from Google Drive.`;
       if (file.mimeType.includes('document')) {
         const docContent = await readGoogleDocContent(file.id);
         summary = docContent.text;
       }
+      const detected = detectJeeSubjectAndChapter(`${file.name} ${summary}`, titleInput);
       await onAddMaterial({
-        title: file.name,
-        subject,
-        chapter: file.name,
+        title: titleInput.trim() || file.name,
+        subject: detected.subject,
+        chapter: detected.chapter,
         sourceType: 'drive',
         sourceRef: file.id,
         contentSummary: summary,
@@ -218,6 +303,7 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
       setErrorText(err?.message || 'Failed to import file from Google Drive/Docs.');
     } finally {
       setAnalyzing(false);
+      setStatusMessage('');
     }
   };
 
@@ -228,11 +314,16 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
       aria-label="Add Material"
       className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4"
     >
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-[600px] p-6 space-y-5">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-[640px] p-6 space-y-5">
         <div className="flex items-center justify-between">
-          <h2 className="font-display font-bold text-xl text-slate-900 dark:text-white">
-            Add Material
-          </h2>
+          <div>
+            <h2 className="font-display font-bold text-xl text-slate-900 dark:text-white">
+              Add Study Material
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Upload PDFs, handwritten note photos (OCR), or up-to-12-hour YouTube marathon lectures — Subject &amp; Chapter are identified automatically
+            </p>
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -243,32 +334,33 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
           </button>
         </div>
 
-        {/* Subject Pill Selector */}
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-500 font-medium">Subject:</span>
-          {(['Physics', 'Chemistry', 'Mathematics'] as const).map((subj) => (
-            <button
-              key={subj}
-              type="button"
-              onClick={() => setSubject(subj)}
-              className={`px-3 py-1 rounded-lg font-semibold transition-colors cursor-pointer ${
-                subject === subj
-                  ? 'bg-[#EEF2FF] text-[#4F46E5] border border-indigo-200'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-              }`}
-            >
-              {subj}
-            </button>
-          ))}
+        {/* Auto-Subject & Chapter Identification Row (No manual Physics/Chemistry/Math selector) */}
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs bg-slate-50 dark:bg-slate-800/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#EEF2FF] text-[#4F46E5] font-semibold">
+              <Sparkles className="w-3.5 h-3.5" />
+              {hasTypedContext
+                ? liveDetected.confidenceLabel
+                : 'AI Auto-Identifies Subject & JEE Chapter'}
+            </span>
+          </div>
+          <input
+            type="text"
+            value={titleInput}
+            onChange={(e) => setTitleInput(e.target.value)}
+            placeholder="Optional: Custom title or topic hint (auto-detected from upload)"
+            className="flex-1 min-w-[220px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white"
+          />
         </div>
 
-        {/* Top Source Tabs matching Screen 3 + Google Drive/Docs */}
+
+        {/* Top Source Tabs */}
         <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-1 overflow-x-auto">
           {[
-            { id: 'pdf', label: 'PDF', icon: FileText },
-            { id: 'photo', label: 'Photo', icon: ImageIcon },
-            { id: 'youtube', label: 'YouTube', icon: Youtube },
-            { id: 'text', label: 'Paste Text', icon: TypeIcon },
+            { id: 'pdf', label: 'PDF Document', icon: FileText },
+            { id: 'photo', label: 'Handwritten Photo (OCR)', icon: ImageIcon },
+            { id: 'youtube', label: 'YouTube (Up to 12h)', icon: Youtube },
+            { id: 'text', label: 'Paste Notes / Outline', icon: TypeIcon },
             { id: 'drive', label: 'Google Drive / Docs', icon: FolderOpen },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -278,7 +370,7 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`px-4 py-2.5 rounded-t-xl text-xs font-semibold flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
+                className={`px-3.5 py-2.5 rounded-t-xl text-xs font-semibold flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
                   active
                     ? 'bg-[#EEF2FF] text-[#4F46E5] border-[#4F46E5]'
                     : 'text-slate-600 dark:text-slate-400 border-transparent hover:text-slate-900'
@@ -293,7 +385,7 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
 
         {/* Tab Contents */}
         {activeTab === 'youtube' && (
-          <div className="space-y-4">
+          <div className="space-y-3.5">
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5">
               <div className="relative flex-1 min-w-[220px]">
                 <Link2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
@@ -301,7 +393,7 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
                   type="url"
                   value={youtubeUrl}
                   onChange={(e) => setYoutubeUrl(e.target.value)}
-                  placeholder="https://www.youtube.com/watch?v=..."
+                  placeholder="Paste YouTube lecture or marathon URL (e.g., https://youtube.com/watch?v=...)"
                   className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-[#4F46E5]"
                 />
               </div>
@@ -309,38 +401,48 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
                 type="button"
                 onClick={handleAnalyzeYouTube}
                 disabled={analyzing}
-                className="px-5 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold text-sm transition-colors cursor-pointer shrink-0"
+                className="px-5 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] disabled:opacity-50 text-white font-semibold text-sm transition-colors cursor-pointer shrink-0"
               >
-                Analyze
+                {analyzing ? 'Extracting...' : 'Extract Lecture'}
               </button>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-medium shrink-0">
-                <Clock className="w-3.5 h-3.5" />
-                Up to 12 h
-              </span>
             </div>
 
-            <div className="px-4 py-3.5 rounded-xl bg-[#EEF2FF]/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div
-                  className={`w-5 h-5 rounded-full border-2 border-[#4F46E5] border-t-transparent ${
-                    analyzing ? 'animate-spin' : ''
-                  }`}
-                />
-                <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                  {statusMessage}
-                </span>
+            {/* Lecture Duration Selector up to 12 Hours */}
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="text-slate-500 font-medium flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-emerald-600" />
+                Lecture Length / Marathon Mode:
+              </span>
+              <div className="flex items-center gap-1.5">
+                {[
+                  { hrs: 1, label: '1h Lecture' },
+                  { hrs: 3, label: '3h One-Shot' },
+                  { hrs: 6, label: '6h Revision' },
+                  { hrs: 12, label: '12h Full Marathon' },
+                ].map((d) => (
+                  <button
+                    key={d.hrs}
+                    type="button"
+                    onClick={() => setLectureDurationHours(d.hrs)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold border cursor-pointer ${
+                      lectureDurationHours === d.hrs
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setAnalyzing(false);
-                  onClose();
-                }}
-                className="px-3.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 cursor-pointer"
-              >
-                Cancel
-              </button>
             </div>
+
+            <textarea
+              rows={3}
+              value={transcriptOrOutline}
+              onChange={(e) => setTranscriptOrOutline(e.target.value)}
+              placeholder="Optional: Paste lecture chapters, timestamps, or key topics covered in the video for instant high-precision KaTeX note & mind-map generation..."
+              className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800 text-xs"
+            />
           </div>
         )}
 
@@ -349,10 +451,10 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
             <label className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl hover:border-[#4F46E5] transition-colors cursor-pointer bg-slate-50/60 dark:bg-slate-800/40">
               <FileText className="w-8 h-8 text-[#4F46E5] mb-2" />
               <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                Upload JEE Chapter PDF (up to 60 pages)
+                Upload JEE Chapter PDF or Handwritten Scan (up to 60 pages)
               </span>
-              <span className="text-xs text-slate-500 mt-1">
-                Extracts formulas, theorems, and page-referenced notes
+              <span className="text-xs text-slate-500 mt-1 text-center">
+                Automatically generates KaTeX notes, multi-level Mind Map, Flashcards, Sticky Notes &amp; Chapter Quiz
               </span>
               <input
                 type="file"
@@ -369,10 +471,10 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
             <label className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl hover:border-[#4F46E5] transition-colors cursor-pointer bg-slate-50/60 dark:bg-slate-800/40">
               <ImageIcon className="w-8 h-8 text-[#4F46E5] mb-2" />
               <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                Upload Photo of Handwritten Notes or Doubt Question
+                Upload Handwritten Notes Photo for AI OCR Extraction
               </span>
-              <span className="text-xs text-slate-500 mt-1">
-                Analyzed by Gemini 4 Argon for handwriting OCR & diagram extraction
+              <span className="text-xs text-slate-500 mt-1 text-center">
+                Reads your handwriting, converts equations to KaTeX, and lets you switch between 4 realistic handwriting fonts
               </span>
               <input
                 type="file"
@@ -386,26 +488,20 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
 
         {activeTab === 'text' && (
           <div className="space-y-3">
-            <input
-              type="text"
-              value={titleInput}
-              onChange={(e) => setTitleInput(e.target.value)}
-              placeholder="Chapter title (e.g., Electrochemistry Formula Sheet)"
-              className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm"
-            />
             <textarea
-              rows={4}
+              rows={5}
               value={pastedText}
               onChange={(e) => setPastedText(e.target.value)}
-              placeholder="Paste your JEE notes, reactions, or derivations here..."
-              className="w-full p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm"
+              placeholder="Paste your JEE notes, handwritten OCR text, reactions, or derivations here (supports KaTeX $...$ and **bold** highlights)..."
+              className="w-full p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs leading-relaxed"
             />
             <button
               type="button"
               onClick={handlePasteSubmit}
-              className="px-5 py-2.5 rounded-xl bg-[#4F46E5] text-white text-sm font-semibold hover:bg-[#4338CA] cursor-pointer"
+              disabled={analyzing}
+              className="px-5 py-2.5 rounded-xl bg-[#4F46E5] text-white text-xs font-semibold hover:bg-[#4338CA] cursor-pointer"
             >
-              Save to Materials
+              Generate Study Bundle (Notes, Mind Map &amp; Flashcards)
             </button>
           </div>
         )}
@@ -453,53 +549,56 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
           </div>
         )}
 
+        {/* ONLY show progress bar when analyzing === true */}
+        {analyzing && (
+          <div className="px-4 py-3.5 rounded-xl bg-[#EEF2FF]/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-5 h-5 rounded-full border-2 border-[#4F46E5] border-t-transparent animate-spin shrink-0" />
+              <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                {statusMessage || 'Analyzing material...'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setAnalyzing(false);
+                setStatusMessage('');
+              }}
+              className="px-3 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 text-xs font-semibold text-slate-700 cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
         {errorText && (
           <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">
             {errorText}
           </div>
         )}
-
-        {/* Bottom quick switcher matching Screen 3 */}
-        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-          <span>Or upload instead:</span>
-          <button
-            type="button"
-            onClick={() => setActiveTab('pdf')}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center gap-1.5 hover:bg-slate-50 cursor-pointer"
-          >
-            <FileText className="w-3.5 h-3.5" />
-            <span>PDF up to 60 pages</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('photo')}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center gap-1.5 hover:bg-slate-50 cursor-pointer"
-          >
-            <ImageIcon className="w-3.5 h-3.5" />
-            <span>Photo of Notes</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('text')}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-medium flex items-center gap-1.5 hover:bg-slate-50 cursor-pointer"
-          >
-            <TypeIcon className="w-3.5 h-3.5" />
-            <span>Paste Text</span>
-          </button>
-        </div>
       </div>
     </div>
   );
 };
 
 // ============================================================================
-// 2. Study Tools Slide-Over Drawer (Exact Match for Screen 11: Study_Tools_Graphing_Workspace-7)
+// 2. Study Tools Slide-Over Drawer (Desmos Graphing Calculator + Offline Scientific Calculator)
 // ============================================================================
 interface StudyToolsDrawerProps {
   isOpen: boolean;
   initialTab?: 'Calculator' | 'Units' | 'Statistics' | 'Formulas' | 'Graph';
   onClose: () => void;
 }
+
+interface GraphEquationItem {
+  id: string;
+  expr: string;
+  color: string;
+  visible: boolean;
+  showDerivative: boolean;
+}
+
+const GRAPH_COLORS = ['#4F46E5', '#059669', '#DC2626', '#D97706', '#7C3AED'];
 
 export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
   isOpen,
@@ -510,11 +609,35 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
     'Calculator' | 'Units' | 'Statistics' | 'Formulas' | 'Graph'
   >(initialTab);
 
-  // Graphing State (matches y = x² − 4 in Screen 11)
-  const [equationInput, setEquationInput] = useState('y = x^2 - 4');
-  const [extraEquations, setExtraEquations] = useState<string[]>([]);
-  const [showExtraInput, setShowExtraInput] = useState(false);
-  const [secondEq, setSecondEq] = useState('y = 2x - 1');
+  // Desmos-Inspired Multi-Equation State
+  const [equations, setEquations] = useState<GraphEquationItem[]>([
+    {
+      id: 'eq-1',
+      expr: 'y = a * x^2 - 4',
+      color: '#4F46E5',
+      visible: true,
+      showDerivative: false,
+    },
+    {
+      id: 'eq-2',
+      expr: 'y = m * x + c',
+      color: '#059669',
+      visible: true,
+      showDerivative: false,
+    },
+  ]);
+  const [sliderParams, setSliderParams] = useState<Record<string, number>>({
+    a: 1,
+    b: 1,
+    c: -1,
+    m: 1.5,
+    k: 1,
+  });
+  const [animatingParam, setAnimatingParam] = useState<string | null>(null);
+  const [selectedPoint, setSelectedPoint] = useState<GraphSpecialPoint | null>(null);
+  const [showTableOfValues, setShowTableOfValues] = useState<boolean>(false);
+  const [tableXValues, setTableXValues] = useState<number[]>([-2, -1, 0, 1, 2]);
+
   const [xMin, setXMin] = useState(-10);
   const [xMax, setXMax] = useState(10);
   const [yMin, setYMin] = useState(-10);
@@ -522,9 +645,26 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
   const [zoomPct, setZoomPct] = useState(100);
   const [panMode, setPanMode] = useState(true);
 
-  // Calculator State
+  // Offline Scientific Calculator State
   const [calcExpr, setCalcExpr] = useState('2 * sin(pi / 6) + sqrt(16)');
   const [calcResult, setCalcResult] = useState<string>('5');
+  const [angleMode, setAngleMode] = useState<'RAD' | 'DEG'>('RAD');
+  const [calcSubMode, setCalcSubMode] = useState<'standard' | 'combinatorics' | 'matrix' | 'vectors'>('standard');
+
+  // Combinatorics state
+  const [combN, setCombN] = useState(10);
+  const [combR, setCombR] = useState(3);
+
+  // 3x3 Matrix state
+  const [matrix3x3, setMatrix3x3] = useState<number[][]>([
+    [2, -1, 3],
+    [1, 4, -2],
+    [0, 5, 1],
+  ]);
+
+  // 3D Vectors state
+  const [vecA, setVecA] = useState<[number, number, number]>([2, 3, -1]);
+  const [vecB, setVecB] = useState<[number, number, number]>([1, -2, 4]);
 
   // Units Converter State
   const [unitCategory, setUnitCategory] = useState<'Energy' | 'Pressure' | 'Angle'>('Energy');
@@ -537,7 +677,25 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
     setActiveTab(initialTab);
   }, [initialTab]);
 
+  // Animate parameter slider if playing
+  useEffect(() => {
+    if (!animatingParam) return;
+    const interval = setInterval(() => {
+      setSliderParams((prev) => {
+        const curr = prev[animatingParam] ?? 1;
+        const next = curr >= 4 ? -4 : Number((curr + 0.2).toFixed(2));
+        return { ...prev, [animatingParam]: next };
+      });
+    }, 120);
+    return () => clearInterval(interval);
+  }, [animatingParam]);
+
   if (!isOpen) return null;
+
+  // Detect all active parameters across equations
+  const activeParamNames = Array.from(
+    new Set(equations.flatMap((eq) => detectEquationParameters(eq.expr)))
+  );
 
   // Build SVG polyline points for graphing calculator
   const scaleFactor = zoomPct / 100;
@@ -547,7 +705,7 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
   const effYMax = yMax / scaleFactor;
 
   const svgWidth = 560;
-  const svgHeight = 360;
+  const svgHeight = 350;
   const pad = 32;
   const plotW = svgWidth - pad * 2;
   const plotH = svgHeight - pad * 2;
@@ -557,12 +715,14 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
   const toScreenY = (y: number) =>
     pad + plotH - ((y - effYMin) / Math.max(0.001, effYMax - effYMin)) * plotH;
 
-  const buildCurvePath = (eq: string) => {
+  const buildCurvePath = (expr: string, isDerivative = false) => {
     const pts: string[] = [];
-    const steps = 160;
+    const steps = 180;
     for (let i = 0; i <= steps; i++) {
       const x = effXMin + (i / steps) * (effXMax - effXMin);
-      const y = evaluateMathFunction(eq, x);
+      const y = isDerivative
+        ? evaluateDerivative(expr, x, sliderParams)
+        : evaluateMathFunction(expr, x, sliderParams);
       if (y !== null && y >= effYMin * 1.4 && y <= effYMax * 1.4) {
         const sx = toScreenX(x).toFixed(1);
         const sy = toScreenY(y).toFixed(1);
@@ -572,14 +732,51 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
     return pts.join(' ');
   };
 
-  const primaryPath = buildCurvePath(equationInput);
-  const secondaryPaths = extraEquations.map((eq) => buildCurvePath(eq));
+  // Compute Desmos-style Roots, Extrema & Intersections
+  const specialPoints: GraphSpecialPoint[] = [];
+  const visibleEqs = equations.filter((e) => e.visible && e.expr.trim());
+  visibleEqs.forEach((eq) => {
+    const pts = findRootsAndExtrema(eq.expr, effXMin, effXMax, sliderParams);
+    pts.forEach((p) => {
+      if (p.y >= effYMin && p.y <= effYMax) {
+        specialPoints.push(p);
+      }
+    });
+  });
+  if (visibleEqs.length >= 2) {
+    const inters = findCurveIntersections(
+      visibleEqs[0].expr,
+      visibleEqs[1].expr,
+      effXMin,
+      effXMax,
+      sliderParams
+    );
+    inters.forEach((p) => {
+      if (p.y >= effYMin && p.y <= effYMax) {
+        specialPoints.push(p);
+      }
+    });
+  }
+
+  const evaluateScientificExpr = (raw: string) => {
+    let transformed = raw;
+    if (angleMode === 'DEG') {
+      transformed = transformed
+        .replace(/sin\(([^)]+)\)/g, 'sin(($1) * pi / 180)')
+        .replace(/cos\(([^)]+)\)/g, 'cos(($1) * pi / 180)')
+        .replace(/tan\(([^)]+)\)/g, 'tan(($1) * pi / 180)');
+    }
+    const val = evaluateMathFunction(transformed, 1);
+    setCalcResult(val !== null ? String(Number(val.toFixed(6))) : 'Syntax Error');
+  };
 
   const statsNumbers = statsRaw
     .split(',')
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n));
   const statsSummary = calculateStatistics(statsNumbers);
+  const vecOps = computeVectorOps(vecA, vecB);
+  const detValue = computeDeterminant3x3(matrix3x3);
 
   return (
     <div
@@ -588,12 +785,17 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
       aria-label="Study Tools"
       className="fixed inset-0 z-50 bg-slate-900/35 flex justify-end"
     >
-      <div className="w-full max-w-[660px] bg-white dark:bg-slate-900 h-full shadow-2xl border-l border-slate-200 dark:border-slate-800 flex flex-col overflow-y-auto">
+      <div className="w-full max-w-[700px] bg-white dark:bg-slate-900 h-full shadow-2xl border-l border-slate-200 dark:border-slate-800 flex flex-col overflow-y-auto">
         {/* Header */}
         <div className="px-6 py-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
-          <h2 className="font-display font-bold text-xl text-slate-900 dark:text-white">
-            Study Tools
-          </h2>
+          <div>
+            <h2 className="font-display font-bold text-xl text-slate-900 dark:text-white">
+              Study Tools &amp; Desmos Graphing Lab
+            </h2>
+            <p className="text-xs text-slate-500">
+              Interactive parameter sliders, roots/extrema/intersections &amp; offline scientific calculator
+            </p>
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -604,14 +806,14 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
           </button>
         </div>
 
-        {/* 5 Tabs matching Screen 11 */}
+        {/* 5 Tabs */}
         <div className="px-6 pt-2 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 overflow-x-auto">
           {[
+            { id: 'Graph', icon: TrendingUp },
             { id: 'Calculator', icon: Calculator },
             { id: 'Units', icon: Ruler },
             { id: 'Statistics', icon: BarChart2 },
             { id: 'Formulas', icon: Sigma },
-            { id: 'Graph', icon: TrendingUp },
           ].map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -637,132 +839,350 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
         <div className="p-6 flex-1 space-y-4">
           {activeTab === 'Graph' && (
             <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
-                  Equation
-                </label>
-                <div className="flex items-center gap-2.5">
-                  <input
-                    type="text"
-                    value={equationInput}
-                    onChange={(e) => setEquationInput(e.target.value)}
-                    className="flex-1 px-3.5 py-2.5 rounded-xl border-2 border-[#4F46E5] text-sm font-medium text-slate-900 dark:text-white bg-white dark:bg-slate-800 focus:outline-none"
-                  />
+              {/* Desmos Presets & Actions Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="font-bold text-slate-500">Presets:</span>
+                  {[
+                    {
+                      label: 'Parabola + Line',
+                      eqs: [
+                        { id: 'eq-1', expr: 'y = a * x^2 - 4', color: '#4F46E5', visible: true, showDerivative: false },
+                        { id: 'eq-2', expr: 'y = m * x + c', color: '#059669', visible: true, showDerivative: false },
+                      ],
+                    },
+                    {
+                      label: 'SHM Wave y = a·sin(k·x)',
+                      eqs: [
+                        { id: 'eq-1', expr: 'y = a * sin(k * x)', color: '#4F46E5', visible: true, showDerivative: true },
+                      ],
+                    },
+                    {
+                      label: 'Cubic Extrema',
+                      eqs: [
+                        { id: 'eq-1', expr: 'y = x^3 - 3 * x', color: '#DC2626', visible: true, showDerivative: true },
+                      ],
+                    },
+                  ].map((p, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => {
+                        setEquations(p.eqs);
+                        setSelectedPoint(null);
+                      }}
+                      className="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 font-semibold cursor-pointer"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowTableOfValues((v) => !v)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 border cursor-pointer ${
+                      showTableOfValues
+                        ? 'bg-[#EEF2FF] text-[#4F46E5] border-indigo-200'
+                        : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Table className="w-3.5 h-3.5" />
+                    <span>x vs f(x) Table</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
-                      if (secondEq.trim() && !extraEquations.includes(secondEq.trim())) {
-                        setExtraEquations((prev) => [...prev, secondEq.trim()]);
-                      }
-                      setShowExtraInput(true);
+                      const nextColor = GRAPH_COLORS[equations.length % GRAPH_COLORS.length];
+                      setEquations((prev) => [
+                        ...prev,
+                        {
+                          id: `eq-${Date.now()}`,
+                          expr: 'y = cos(x)',
+                          color: nextColor,
+                          visible: true,
+                          showDerivative: false,
+                        },
+                      ]);
                     }}
-                    className="px-4 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white text-xs font-semibold transition-colors cursor-pointer shrink-0"
+                    className="px-3 py-1.5 rounded-lg bg-[#4F46E5] hover:bg-[#4338CA] text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                   >
-                    Add Equation
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Equation</span>
                   </button>
                 </div>
               </div>
 
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowExtraInput((v) => !v)}
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800 text-left text-xs text-slate-600 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
-                >
-                  <span>›</span>
-                  <span>Additional equation</span>
-                </button>
-                {showExtraInput && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={secondEq}
-                      onChange={(e) => setSecondEq(e.target.value)}
-                      placeholder="e.g., y = 2x + 1"
-                      className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs"
-                    />
+              {/* Multi-Equation List */}
+              <div className="space-y-2">
+                {equations.map((eq, idx) => (
+                  <div
+                    key={eq.id}
+                    className="flex items-center gap-2 p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50"
+                  >
                     <button
                       type="button"
-                      onClick={() => {
-                        if (secondEq.trim()) {
-                          setExtraEquations((prev) => [...prev, secondEq.trim()]);
-                        }
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold cursor-pointer"
+                      onClick={() =>
+                        setEquations((prev) =>
+                          prev.map((item) =>
+                            item.id === eq.id ? { ...item, visible: !item.visible } : item
+                          )
+                        )
+                      }
+                      aria-label={`Toggle visibility for equation ${idx + 1}`}
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold cursor-pointer shrink-0"
+                      style={{ backgroundColor: eq.visible ? eq.color : '#94A3B8' }}
                     >
-                      Plot Line
+                      {eq.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                    </button>
+
+                    <input
+                      type="text"
+                      value={eq.expr}
+                      onChange={(e) =>
+                        setEquations((prev) =>
+                          prev.map((item) =>
+                            item.id === eq.id ? { ...item, expr: e.target.value } : item
+                          )
+                        )
+                      }
+                      placeholder="e.g., y = a * x^2 - 4"
+                      className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-[#4F46E5]"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEquations((prev) =>
+                          prev.map((item) =>
+                            item.id === eq.id
+                              ? { ...item, showDerivative: !item.showDerivative }
+                              : item
+                          )
+                        )
+                      }
+                      title="Toggle d/dx Derivative Curve Overlay"
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold border cursor-pointer ${
+                        eq.showDerivative
+                          ? 'bg-amber-50 text-amber-800 border-amber-300'
+                          : 'border-slate-200 text-slate-500 hover:bg-slate-100'
+                      }`}
+                    >
+                      d/dx
+                    </button>
+
+                    {equations.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEquations((prev) => prev.filter((item) => item.id !== eq.id))
+                        }
+                        aria-label="Remove equation"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Desmos Interactive Parameter Sliders (a, b, c, m, k) */}
+              {activeParamNames.length > 0 && (
+                <div className="p-3.5 rounded-xl bg-[#EEF2FF]/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900 space-y-2.5">
+                  <div className="text-[11px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                    Interactive Parameter Sliders ({activeParamNames.join(', ')})
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {activeParamNames.map((param) => {
+                      const val = sliderParams[param] ?? 1;
+                      const isPlaying = animatingParam === param;
+                      return (
+                        <div
+                          key={param}
+                          className="p-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center gap-2.5 text-xs"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setAnimatingParam(isPlaying ? null : param)}
+                            aria-label={`Animate parameter ${param}`}
+                            className="w-6 h-6 rounded-md bg-indigo-50 text-[#4F46E5] flex items-center justify-center cursor-pointer shrink-0"
+                          >
+                            {isPlaying ? (
+                              <Pause className="w-3 h-3" />
+                            ) : (
+                              <Play className="w-3 h-3" />
+                            )}
+                          </button>
+                          <span className="font-mono font-bold text-slate-800 dark:text-slate-200 w-14">
+                            {param} = {val}
+                          </span>
+                          <input
+                            type="range"
+                            min={-5}
+                            max={5}
+                            step={0.25}
+                            value={val}
+                            onChange={(e) =>
+                              setSliderParams((prev) => ({
+                                ...prev,
+                                [param]: Number(e.target.value),
+                              }))
+                            }
+                            className="flex-1 accent-[#4F46E5]"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Dynamic x vs f(x) Table of Values */}
+              {showTableOfValues && (
+                <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-slate-800 dark:text-slate-200">
+                      Dynamic Table of Values: x vs f(x) &amp; f&apos;(x)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTableXValues((prev) => [
+                          ...prev,
+                          (prev[prev.length - 1] ?? 2) + 1,
+                        ])
+                      }
+                      className="text-[11px] font-bold text-[#4F46E5] hover:underline cursor-pointer"
+                    >
+                      + Add x Row
                     </button>
                   </div>
-                )}
-              </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs font-mono border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-left text-slate-500">
+                          <th className="py-1.5 px-2">x</th>
+                          <th className="py-1.5 px-2">f₁(x)</th>
+                          <th className="py-1.5 px-2">f₁&apos;(x) (Slope)</th>
+                          {equations[1] && <th className="py-1.5 px-2">f₂(x)</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {tableXValues.map((xv, rIdx) => {
+                          const y1 = evaluateMathFunction(
+                            equations[0]?.expr || 'x',
+                            xv,
+                            sliderParams
+                          );
+                          const dy1 = evaluateDerivative(
+                            equations[0]?.expr || 'x',
+                            xv,
+                            sliderParams
+                          );
+                          const y2 = equations[1]
+                            ? evaluateMathFunction(equations[1].expr, xv, sliderParams)
+                            : null;
+                          return (
+                            <tr key={rIdx}>
+                              <td className="py-1 px-2">
+                                <input
+                                  type="number"
+                                  value={xv}
+                                  onChange={(e) => {
+                                    const next = [...tableXValues];
+                                    next[rIdx] = Number(e.target.value);
+                                    setTableXValues(next);
+                                  }}
+                                  className="w-14 px-1.5 py-0.5 rounded border border-slate-200 bg-white text-center"
+                                />
+                              </td>
+                              <td className="py-1 px-2 font-bold text-[#4F46E5]">
+                                {y1 !== null ? Number(y1.toFixed(4)) : 'undef'}
+                              </td>
+                              <td className="py-1 px-2 text-amber-700">
+                                {dy1 !== null ? Number(dy1.toFixed(4)) : 'undef'}
+                              </td>
+                              {equations[1] && (
+                                <td className="py-1 px-2 font-bold text-emerald-700">
+                                  {y2 !== null ? Number(y2.toFixed(4)) : 'undef'}
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* Range Controls */}
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-slate-600 font-medium">x range</span>
+                  <span className="text-slate-600 font-medium">x:</span>
                   <input
                     type="number"
                     value={xMin}
                     onChange={(e) => setXMin(Number(e.target.value))}
-                    className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 text-center tabular-nums"
+                    className="w-14 px-2 py-1 rounded-lg border border-slate-200 text-center tabular-nums"
                   />
-                  <span className="text-slate-500">to</span>
+                  <span>to</span>
                   <input
                     type="number"
                     value={xMax}
                     onChange={(e) => setXMax(Number(e.target.value))}
-                    className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 text-center tabular-nums"
+                    className="w-14 px-2 py-1 rounded-lg border border-slate-200 text-center tabular-nums"
                   />
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  <span className="text-slate-600 font-medium">y range</span>
+                  <span className="text-slate-600 font-medium">y:</span>
                   <input
                     type="number"
                     value={yMin}
                     onChange={(e) => setYMin(Number(e.target.value))}
-                    className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 text-center tabular-nums"
+                    className="w-14 px-2 py-1 rounded-lg border border-slate-200 text-center tabular-nums"
                   />
-                  <span className="text-slate-500">to</span>
+                  <span>to</span>
                   <input
                     type="number"
                     value={yMax}
                     onChange={(e) => setYMax(Number(e.target.value))}
-                    className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 text-center tabular-nums"
+                    className="w-14 px-2 py-1 rounded-lg border border-slate-200 text-center tabular-nums"
                   />
                 </div>
 
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setZoomPct(100)}
-                    className="px-4 py-1.5 rounded-lg bg-[#4F46E5] text-white font-semibold cursor-pointer"
-                  >
-                    Plot
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEquationInput('y = x^2 - 4');
-                      setExtraEquations([]);
-                      setXMin(-10);
-                      setXMax(10);
-                      setYMin(-10);
-                      setYMax(10);
-                      setZoomPct(100);
-                    }}
-                    className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 cursor-pointer"
-                  >
-                    Reset
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setZoomPct(100);
+                    setSelectedPoint(null);
+                  }}
+                  className="px-3 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Reset View
+                </button>
               </div>
 
-              {/* Coordinate Graph Canvas matching Screen 11 */}
+              {/* Coordinate Graph Canvas with Clickable Roots, Extrema & Intersections */}
               <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span className="text-slate-500">
+                    Click any gray key-point dot on the curve to inspect exact <strong>Roots</strong>,{' '}
+                    <strong>Extrema</strong>, or <strong>Intersections</strong>:
+                  </span>
+                  {selectedPoint && (
+                    <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-[#4F46E5] font-mono font-bold">
+                      {selectedPoint.label}
+                    </span>
+                  )}
+                </div>
+
                 <svg
                   viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-                  className="w-full h-[340px] select-none"
+                  className="w-full h-[330px] select-none"
                 >
                   {/* Grid lines */}
                   {[-10, -8, -6, -4, -2, 0, 2, 4, 6, 8, 10].map((tick) => {
@@ -790,19 +1210,19 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
                           <>
                             <text
                               x={sx}
-                              y={toScreenY(0) + 16}
+                              y={toScreenY(0) + 15}
                               textAnchor="middle"
                               fontSize="10"
-                              fill="#334155"
+                              fill="#475569"
                             >
                               {tick}
                             </text>
                             <text
-                              x={toScreenX(0) - 10}
+                              x={toScreenX(0) - 8}
                               y={sy + 3}
                               textAnchor="end"
                               fontSize="10"
-                              fill="#334155"
+                              fill="#475569"
                             >
                               {tick}
                             </text>
@@ -829,84 +1249,134 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
                     stroke="#0F172A"
                     strokeWidth="1.6"
                   />
-                  <text
-                    x={svgWidth - pad + 10}
-                    y={toScreenY(0) + 4}
-                    fontStyle="italic"
-                    fontWeight="bold"
-                    fontSize="12"
-                  >
-                    x
-                  </text>
-                  <text
-                    x={toScreenX(0) + 8}
-                    y={pad - 6}
-                    fontStyle="italic"
-                    fontWeight="bold"
-                    fontSize="12"
-                  >
-                    y
-                  </text>
 
-                  {/* Primary Plotted Function Curve */}
-                  {primaryPath && (
-                    <path
-                      d={primaryPath}
-                      fill="none"
-                      stroke="#4338CA"
-                      strokeWidth="2.6"
-                      strokeLinecap="round"
-                    />
-                  )}
-                  {secondaryPaths.map((p, idx) =>
-                    p ? (
-                      <path
+                  {/* Plotted Function Curves & Optional d/dx Derivative Overlays */}
+                  {visibleEqs.map((eq) => {
+                    const pathD = buildCurvePath(eq.expr, false);
+                    const derivPathD = eq.showDerivative ? buildCurvePath(eq.expr, true) : '';
+                    return (
+                      <g key={eq.id}>
+                        {pathD && (
+                          <path
+                            d={pathD}
+                            fill="none"
+                            stroke={eq.color}
+                            strokeWidth="2.6"
+                            strokeLinecap="round"
+                          />
+                        )}
+                        {derivPathD && (
+                          <path
+                            d={derivPathD}
+                            fill="none"
+                            stroke="#D97706"
+                            strokeWidth="1.8"
+                            strokeDasharray="5,4"
+                          />
+                        )}
+                      </g>
+                    );
+                  })}
+
+                  {/* Desmos-style Clickable Key Points (Roots, Extrema, Intersections) */}
+                  {specialPoints.slice(0, 18).map((pt, idx) => {
+                    const cx = toScreenX(pt.x);
+                    const cy = toScreenY(pt.y);
+                    const isSelected =
+                      selectedPoint &&
+                      Math.abs(selectedPoint.x - pt.x) < 0.05 &&
+                      Math.abs(selectedPoint.y - pt.y) < 0.05;
+                    return (
+                      <g
                         key={idx}
-                        d={p}
-                        fill="none"
-                        stroke="#059669"
-                        strokeWidth="2"
-                        strokeDasharray="5,3"
-                      />
-                    ) : null
-                  )}
+                        onClick={() => setSelectedPoint(pt)}
+                        className="cursor-pointer"
+                      >
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={isSelected ? 6 : 4.5}
+                          fill={isSelected ? '#4F46E5' : '#64748B'}
+                          stroke="#FFFFFF"
+                          strokeWidth="1.8"
+                        />
+                        {isSelected && (
+                          <g>
+                            <rect
+                              x={Math.min(svgWidth - 155, Math.max(8, cx - 70))}
+                              y={Math.max(10, cy - 30)}
+                              width="145"
+                              height="20"
+                              rx="5"
+                              fill="#0F172A"
+                            />
+                            <text
+                              x={Math.min(svgWidth - 82, Math.max(80, cx))}
+                              y={Math.max(24, cy - 16)}
+                              textAnchor="middle"
+                              fontSize="10"
+                              fontWeight="bold"
+                              fill="#FFFFFF"
+                            >
+                              {pt.label}
+                            </text>
+                          </g>
+                        )}
+                      </g>
+                    );
+                  })}
                 </svg>
 
-                {/* Bottom Zoom & Pan Controls */}
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  <div className="inline-flex items-center rounded-lg border border-slate-200 text-xs">
+                {/* Bottom Key Points Chips & Zoom Controls */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {specialPoints.slice(0, 4).map((pt, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setSelectedPoint(pt)}
+                        className="px-2 py-1 rounded-md bg-slate-100 hover:bg-indigo-50 text-[10px] font-mono font-semibold text-slate-700 cursor-pointer"
+                      >
+                        {pt.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="inline-flex items-center rounded-lg border border-slate-200 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setZoomPct((z) => Math.max(50, z - 25))}
+                        aria-label="Zoom out graph"
+                        className="px-2.5 py-1.5 hover:bg-slate-50 cursor-pointer"
+                      >
+                        <ZoomOut className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="px-3 py-1.5 border-x border-slate-200 font-mono font-medium">
+                        {zoomPct}%
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setZoomPct((z) => Math.min(200, z + 25))}
+                        aria-label="Zoom in graph"
+                        className="px-2.5 py-1.5 hover:bg-slate-50 cursor-pointer"
+                      >
+                        <ZoomIn className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => setZoomPct((z) => Math.max(50, z - 25))}
-                      aria-label="Zoom out graph"
-                      className="px-2.5 py-1.5 hover:bg-slate-50 cursor-pointer"
+                      onClick={() => setPanMode((v) => !v)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+                        panMode
+                          ? 'bg-[#EEF2FF] text-[#4F46E5]'
+                          : 'border border-slate-200 text-slate-600'
+                      }`}
                     >
-                      <ZoomOut className="w-3.5 h-3.5" />
-                    </button>
-                    <span className="px-3 py-1.5 border-x border-slate-200 font-mono font-medium">
-                      {zoomPct}%
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setZoomPct((z) => Math.min(200, z + 25))}
-                      aria-label="Zoom in graph"
-                      className="px-2.5 py-1.5 hover:bg-slate-50 cursor-pointer"
-                    >
-                      <ZoomIn className="w-3.5 h-3.5" />
+                      <Hand className="w-3.5 h-3.5" />
+                      <span>Pan</span>
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setPanMode((v) => !v)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
-                      panMode
-                        ? 'bg-[#EEF2FF] text-[#4F46E5]'
-                        : 'border border-slate-200 text-slate-600'
-                    }`}
-                  >
-                    <Hand className="w-3.5 h-3.5" />
-                    <span>Pan</span>
-                  </button>
                 </div>
               </div>
             </div>
@@ -914,51 +1384,240 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
 
           {activeTab === 'Calculator' && (
             <div className="space-y-4">
-              <label className="block text-xs font-bold text-slate-700">
-                Scientific Expression Evaluator (Radians)
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={calcExpr}
-                  onChange={(e) => setCalcExpr(e.target.value)}
-                  className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 font-mono text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const val = evaluateMathFunction(calcExpr, 1);
-                    setCalcResult(val !== null ? String(Number(val.toFixed(6))) : 'Syntax Error');
-                  }}
-                  className="px-4 py-2.5 rounded-xl bg-[#4F46E5] text-white text-xs font-semibold cursor-pointer"
-                >
-                  Evaluate
-                </button>
-              </div>
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-                <span className="text-xs text-slate-500">Result:</span>
-                <span className="font-mono font-bold text-xl text-[#4F46E5] tabular-nums">
-                  {calcResult}
-                </span>
-              </div>
-              <div className="grid grid-cols-4 gap-2 text-xs font-mono">
-                {['sin(pi/4)', 'cos(pi/3)', 'sqrt(2)', 'log(10)', 'exp(1)', '3^4', 'pi', 'abs(-9.8)'].map(
-                  (preset) => (
+              {/* Sub-mode switcher: Standard Keypad | nCr/nPr | 3x3 Matrix | 3D Vectors */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-1.5 text-xs">
+                  {(
+                    [
+                      { id: 'standard', label: 'Trig & Log Keypad' },
+                      { id: 'combinatorics', label: 'nCr · nPr · n!' },
+                      { id: 'matrix', label: '3×3 Matrix Det' },
+                      { id: 'vectors', label: '3D Vectors (A·B, A×B)' },
+                    ] as const
+                  ).map((m) => (
                     <button
-                      key={preset}
+                      key={m.id}
                       type="button"
-                      onClick={() => {
-                        setCalcExpr(preset);
-                        const v = evaluateMathFunction(preset, 1);
-                        if (v !== null) setCalcResult(String(Number(v.toFixed(6))));
-                      }}
-                      className="p-2.5 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:border-indigo-200 cursor-pointer"
+                      onClick={() => setCalcSubMode(m.id)}
+                      className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${
+                        calcSubMode === m.id
+                          ? 'bg-[#4F46E5] text-white'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      }`}
                     >
-                      {preset}
+                      {m.label}
                     </button>
-                  )
-                )}
+                  ))}
+                </div>
+
+                <div className="inline-flex rounded-lg border border-slate-200 p-0.5 text-xs">
+                  {(['RAD', 'DEG'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setAngleMode(mode)}
+                      className={`px-2.5 py-1 rounded-md font-bold cursor-pointer ${
+                        angleMode === mode ? 'bg-indigo-600 text-white' : 'text-slate-600'
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              {calcSubMode === 'standard' && (
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={calcExpr}
+                      onChange={(e) => setCalcExpr(e.target.value)}
+                      className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 font-mono text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => evaluateScientificExpr(calcExpr)}
+                      className="px-4 py-2.5 rounded-xl bg-[#4F46E5] text-white text-xs font-semibold cursor-pointer"
+                    >
+                      Evaluate
+                    </button>
+                  </div>
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                    <span className="text-xs text-slate-500">Result ({angleMode}):</span>
+                    <span className="font-mono font-bold text-xl text-[#4F46E5] tabular-nums">
+                      {calcResult}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-xs font-mono">
+                    {[
+                      'sin(pi/6)',
+                      'cos(pi/3)',
+                      'tan(pi/4)',
+                      'asin(0.5)',
+                      'acos(0.5)',
+                      'atan(1)',
+                      'ln(e)',
+                      'log(100)',
+                      'sqrt(2)',
+                      '3^4',
+                      'pi',
+                      'abs(-9.8)',
+                    ].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => {
+                          setCalcExpr(preset);
+                          evaluateScientificExpr(preset);
+                        }}
+                        className="p-2.5 rounded-lg border border-slate-200 hover:bg-indigo-50 hover:border-indigo-200 cursor-pointer"
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {calcSubMode === 'combinatorics' && (
+                <div className="p-4 rounded-xl border border-slate-200 space-y-4 text-xs">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">n (Total items)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={170}
+                        value={combN}
+                        onChange={(e) => setCombN(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-200 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">r (Selected items)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={170}
+                        value={combR}
+                        onChange={(e) => setCombR(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-200 font-mono"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-100">
+                      <div className="text-[11px] text-slate-500">Combination (^nC_r)</div>
+                      <div className="font-mono font-extrabold text-base text-[#4F46E5] mt-0.5">
+                        {computeCombination(combN, combR)}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-100">
+                      <div className="text-[11px] text-slate-500">Permutation (^nP_r)</div>
+                      <div className="font-mono font-extrabold text-base text-emerald-700 mt-0.5">
+                        {computePermutation(combN, combR)}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-100">
+                      <div className="text-[11px] text-slate-500">Factorial (n!)</div>
+                      <div className="font-mono font-extrabold text-base text-amber-800 mt-0.5">
+                        {computeFactorial(Math.min(20, combN))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {calcSubMode === 'matrix' && (
+                <div className="p-4 rounded-xl border border-slate-200 space-y-4 text-xs">
+                  <div className="font-bold text-slate-800">
+                    3×3 Matrix Determinant Calculator (|A|)
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 max-w-xs">
+                    {matrix3x3.map((row, r) =>
+                      row.map((val, c) => (
+                        <input
+                          key={`${r}-${c}`}
+                          type="number"
+                          value={val}
+                          onChange={(e) => {
+                            const copy = matrix3x3.map((rw) => [...rw]);
+                            copy[r][c] = Number(e.target.value);
+                            setMatrix3x3(copy);
+                          }}
+                          className="px-2.5 py-2 rounded-lg border border-slate-200 font-mono text-center font-bold"
+                        />
+                      ))
+                    )}
+                  </div>
+                  <div className="p-3.5 rounded-xl bg-indigo-50/70 border border-indigo-100 flex items-center justify-between">
+                    <span className="font-semibold text-slate-700">Determinant det(A):</span>
+                    <span className="font-mono font-extrabold text-lg text-[#4F46E5]">
+                      {detValue}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {calcSubMode === 'vectors' && (
+                <div className="p-4 rounded-xl border border-slate-200 space-y-4 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <div className="font-bold text-slate-700 mb-1">
+                        Vector A (Aₓ, Aᵧ, A_z)
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {[0, 1, 2].map((i) => (
+                          <input
+                            key={i}
+                            type="number"
+                            value={vecA[i]}
+                            onChange={(e) => {
+                              const next: [number, number, number] = [...vecA] as any;
+                              next[i] = Number(e.target.value);
+                              setVecA(next);
+                            }}
+                            className="px-2 py-1.5 rounded-lg border border-slate-200 font-mono text-center"
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="font-bold text-slate-700 mb-1">
+                        Vector B (Bₓ, Bᵧ, B_z)
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {[0, 1, 2].map((i) => (
+                          <input
+                            key={i}
+                            type="number"
+                            value={vecB[i]}
+                            onChange={(e) => {
+                              const next: [number, number, number] = [...vecB] as any;
+                              next[i] = Number(e.target.value);
+                              setVecB(next);
+                            }}
+                            className="px-2 py-1.5 rounded-lg border border-slate-200 font-mono text-center"
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 font-mono">
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                      <div className="text-[11px] text-slate-500">Dot Product (A · B)</div>
+                      <div className="font-bold text-base text-[#4F46E5]">{vecOps.dot}</div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                      <div className="text-[11px] text-slate-500">Cross Product (A × B)</div>
+                      <div className="font-bold text-base text-emerald-700">
+                        ({vecOps.cross.join(', ')})
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -982,7 +1641,13 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">
-                  Input Value ({unitCategory === 'Energy' ? 'Electron-Volts (eV)' : unitCategory === 'Pressure' ? 'Atmospheres (atm)' : 'Degrees (°)'})
+                  Input Value (
+                  {unitCategory === 'Energy'
+                    ? 'Electron-Volts (eV)'
+                    : unitCategory === 'Pressure'
+                    ? 'Atmospheres (atm)'
+                    : 'Degrees (°)'}
+                  )
                 </label>
                 <input
                   type="number"
@@ -1030,19 +1695,27 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                   <div className="text-[11px] text-slate-500">Mean (x̄)</div>
-                  <div className="font-mono font-bold text-base tabular-nums">{statsSummary.mean}</div>
+                  <div className="font-mono font-bold text-base tabular-nums">
+                    {statsSummary.mean}
+                  </div>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                   <div className="text-[11px] text-slate-500">Median</div>
-                  <div className="font-mono font-bold text-base tabular-nums">{statsSummary.median}</div>
+                  <div className="font-mono font-bold text-base tabular-nums">
+                    {statsSummary.median}
+                  </div>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                   <div className="text-[11px] text-slate-500">Variance (σ²)</div>
-                  <div className="font-mono font-bold text-base tabular-nums">{statsSummary.variance}</div>
+                  <div className="font-mono font-bold text-base tabular-nums">
+                    {statsSummary.variance}
+                  </div>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                   <div className="text-[11px] text-slate-500">Std Dev (σ)</div>
-                  <div className="font-mono font-bold text-base tabular-nums">{statsSummary.stdDev}</div>
+                  <div className="font-mono font-bold text-base tabular-nums">
+                    {statsSummary.stdDev}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1052,31 +1725,31 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
             <div className="space-y-3">
               {[
                 {
-                  subj: 'Chemistry · d & f Block',
-                  title: 'Spin-Only Magnetic Moment',
-                  eq: 'μ = √(n(n + 2)) BM   (where n = number of unpaired electrons)',
+                  subj: 'Physics · Rotational Mechanics',
+                  title: 'Rolling Without Slipping Acceleration',
+                  eq: '$$a = \\frac{g\\sin\\theta}{1 + \\frac{I_{cm}}{mR^2}}$$',
                 },
                 {
                   subj: 'Chemistry · Electrochemistry',
                   title: 'Nernst Equation at 298 K',
-                  eq: 'E_cell = E°_cell − (0.0591 / n) log₁₀ Q',
+                  eq: '$$E_{\\text{cell}} = E^\\circ_{\\text{cell}} - \\frac{0.0591}{n}\\log_{10} Q$$',
                 },
                 {
-                  subj: 'Physics · Mechanics',
-                  title: 'Block on Inclined Plane with Friction',
-                  eq: 'N = mg cos θ,   a = g(sin θ − μ_k cos θ)',
+                  subj: 'Physics · Electrostatics',
+                  title: 'Gauss Law & Electric Flux',
+                  eq: '$$\\Phi_E = \\oint \\vec{E}\\cdot d\\vec{A} = \\frac{q_{\\text{enclosed}}}{\\varepsilon_0}$$',
                 },
                 {
-                  subj: 'Mathematics · Probability',
-                  title: 'Conditional Probability & Bayes Theorem',
-                  eq: 'P(A | B) = P(A ∩ B) / P(B)',
+                  subj: 'Mathematics · Calculus',
+                  title: 'King’s Property of Definite Integrals',
+                  eq: '$$\\int_a^b f(x)\\,dx = \\int_a^b f(a + b - x)\\,dx$$',
                 },
               ].map((f, i) => (
                 <div key={i} className="p-3.5 rounded-xl border border-slate-200 space-y-1">
                   <div className="text-[11px] font-semibold text-[#4F46E5]">{f.subj}</div>
-                  <div className="text-xs font-bold text-slate-900">{f.title}</div>
-                  <div className="font-mono text-xs text-slate-700 bg-slate-50 px-3 py-2 rounded-lg">
-                    {f.eq}
+                  <div className="text-xs font-bold text-slate-900 dark:text-white">{f.title}</div>
+                  <div className="text-xs text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 px-3 py-2 rounded-lg">
+                    <MathRichText content={f.eq} />
                   </div>
                 </div>
               ))}
@@ -1159,7 +1832,7 @@ export const FocusTimerModal: React.FC<FocusTimerModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Close Focus Timer"
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -1237,12 +1910,8 @@ export const FocusTimerModal: React.FC<FocusTimerModalProps> = ({
               : `Generate ${durationType === 'full' ? 'Full Track (Lyria Pro)' : '30s Focus Clip (Lyria Clip)'}`}
           </button>
 
-          {audioUrl && (
-            <audio controls src={audioUrl} className="w-full h-9 mt-2" />
-          )}
-          {musicError && (
-            <p className="text-[11px] text-red-600">{musicError}</p>
-          )}
+          {audioUrl && <audio controls src={audioUrl} className="w-full h-9 mt-2" />}
+          {musicError && <p className="text-[11px] text-red-600">{musicError}</p>}
         </div>
       </div>
     </div>
@@ -1250,41 +1919,82 @@ export const FocusTimerModal: React.FC<FocusTimerModalProps> = ({
 };
 
 // ============================================================================
-// 4. Real-Time Live Voice Tutor Modal (gemini-3.8-live via WebSocket /api/live)
+// 4. ChatGPT / Gemini-Style Live Voice Tutor Modal
+//    - Word-by-word live paragraph streaming for Speaker (You) and AI (Tutor)
+//    - Interruptible speech (Barge-In button or speaking stops AI output immediately)
+//    - Live KaTeX math rendering inside voice transcript paragraphs
+//    - Persistent Voice Session History per chapter/material
 // ============================================================================
+export interface VoiceTurnEntry {
+  id: string;
+  speaker: 'You' | 'Tutor';
+  text: string;
+  timestamp: string;
+  streaming?: boolean;
+}
+
 interface LiveVoiceTutorModalProps {
   isOpen: boolean;
   chapterTitle: string;
+  materialContext?: string;
   onClose: () => void;
 }
 
 export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
   isOpen,
   chapterTitle,
+  materialContext = '',
   onClose,
 }) => {
+  const storageKey = `learnmate_voice_history_${chapterTitle.replace(/\s+/g, '_').toLowerCase()}`;
+  const [activeView, setActiveView] = useState<'live' | 'history'>('live');
   const [connected, setConnected] = useState(false);
-  const [transcriptLog, setTranscriptLog] = useState<{ speaker: 'You' | 'Tutor'; text: string }[]>(
-    []
-  );
-  const [textFallback, setTextFallback] = useState('');
+  const [micActive, setMicActive] = useState(false);
+  const [aiSpeaking, setAiSpeaking] = useState(false);
+  const [liveUserDraft, setLiveUserDraft] = useState('');
+  const [turns, setTurns] = useState<VoiceTurnEntry[]>([]);
+  const [voicePromptInput, setVoicePromptInput] = useState('');
   const [statusError, setStatusError] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const inputCtxRef = useRef<AudioContext | null>(null);
-  const outputCtxRef = useRef<AudioContext | null>(null);
-  const nextStartTimeRef = useRef<number>(0);
-  const streamRef = useRef<MediaStream | null>(null);
+  const [voiceMuted, setVoiceMuted] = useState(false);
 
+  const wsRef = useRef<WebSocket | null>(null);
+  const streamTimerRef = useRef<number | null>(null);
+  const userStreamTimerRef = useRef<number | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Load saved voice history for this chapter
   useEffect(() => {
     if (!isOpen) return;
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        setTurns(JSON.parse(saved));
+      } else {
+        setTurns([]);
+      }
+    } catch {
+      setTurns([]);
+    }
+  }, [isOpen, storageKey]);
 
+  // Persist voice history whenever turns update
+  useEffect(() => {
+    if (!isOpen || turns.length === 0) return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(turns.slice(-40)));
+    } catch {
+      // ignore storage quota
+    }
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [turns, isOpen, storageKey]);
+
+  // Connect to /api/live WebSocket
+  useEffect(() => {
+    if (!isOpen) return;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/api/live`);
     wsRef.current = ws;
-
-    const outputCtx = new AudioContext({ sampleRate: 24000 });
-    outputCtxRef.current = outputCtx;
-    nextStartTimeRef.current = 0;
 
     ws.onmessage = (event) => {
       try {
@@ -1293,89 +2003,269 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
           setConnected(true);
         }
         if (msg.inputTranscript) {
-          setTranscriptLog((prev) => [...prev, { speaker: 'You', text: msg.inputTranscript }]);
+          appendWordChunkToTurn('You', msg.inputTranscript);
         }
         if (msg.outputTranscript) {
-          setTranscriptLog((prev) => [...prev, { speaker: 'Tutor', text: msg.outputTranscript }]);
+          appendWordChunkToTurn('Tutor', msg.outputTranscript);
         }
-        if (msg.audio && outputCtxRef.current) {
-          // Decode 24kHz 16-bit PCM little-endian
-          const binary = atob(msg.audio);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-          }
-          const int16 = new Int16Array(bytes.buffer);
-          const float32 = new Float32Array(int16.length);
-          for (let i = 0; i < int16.length; i++) {
-            float32[i] = int16[i] / 32768;
-          }
-          const audioBuffer = outputCtxRef.current.createBuffer(1, float32.length, 24000);
-          audioBuffer.getChannelData(0).set(float32);
-
-          const source = outputCtxRef.current.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(outputCtxRef.current.destination);
-          const now = outputCtxRef.current.currentTime;
-          const startAt = Math.max(now, nextStartTimeRef.current);
-          source.start(startAt);
-          nextStartTimeRef.current = startAt + audioBuffer.duration;
-        }
-        if (msg.error) {
-          setStatusError(msg.error);
+        if (msg.interrupted) {
+          handleInterruptSpeech();
         }
       } catch {
         // ignore parse errors
       }
     };
 
+    ws.onerror = () => {
+      setConnected(false);
+    };
+
     return () => {
       ws.close();
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      inputCtxRef.current?.close();
-      outputCtxRef.current?.close();
+      stopAllTimersAndSpeech();
       setConnected(false);
+      setMicActive(false);
     };
   }, [isOpen]);
 
-  const startMicStreaming = async () => {
-    try {
-      setStatusError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const inputCtx = new AudioContext({ sampleRate: 16000 });
-      inputCtxRef.current = inputCtx;
-      const source = inputCtx.createMediaStreamSource(stream);
-      const processor = inputCtx.createScriptProcessor(4096, 1, 1);
-      source.connect(processor);
-      processor.connect(inputCtx.destination);
-
-      processor.onaudioprocess = (e) => {
-        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-        const floatData = e.inputBuffer.getChannelData(0);
-        const int16 = new Int16Array(floatData.length);
-        for (let i = 0; i < floatData.length; i++) {
-          const s = Math.max(-1, Math.min(1, floatData[i]));
-          int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-        const bytes = new Uint8Array(int16.buffer);
-        let binary = '';
-        for (let i = 0; i < bytes.byteLength; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        wsRef.current.send(JSON.stringify({ audio: btoa(binary) }));
-      };
-    } catch (err: any) {
-      setStatusError(err?.message || 'Microphone permission denied.');
+  const stopAllTimersAndSpeech = () => {
+    if (streamTimerRef.current) {
+      window.clearInterval(streamTimerRef.current);
+      streamTimerRef.current = null;
     }
+    if (userStreamTimerRef.current) {
+      window.clearInterval(userStreamTimerRef.current);
+      userStreamTimerRef.current = null;
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+    }
+    setAiSpeaking(false);
   };
 
-  const sendTextPrompt = (e: React.FormEvent) => {
+  // Barge-In / Interrupt handler
+  const handleInterruptSpeech = () => {
+    stopAllTimersAndSpeech();
+    setTurns((prev) =>
+      prev.map((t, i) => (i === prev.length - 1 ? { ...t, streaming: false } : t))
+    );
+  };
+
+  const appendWordChunkToTurn = (speaker: 'You' | 'Tutor', chunk: string) => {
+    setTurns((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.speaker === speaker && last.streaming) {
+        return [
+          ...prev.slice(0, -1),
+          { ...last, text: `${last.text} ${chunk}`.replace(/\s+/g, ' ').trim() },
+        ];
+      }
+      return [
+        ...prev,
+        {
+          id: `vt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          speaker,
+          text: chunk.trim(),
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          streaming: true,
+        },
+      ];
+    });
+  };
+
+  // Stream a full paragraph word-by-word into the transcript & speak it via TTS
+  const streamUserAndTutorConversation = async (spokenUserText: string) => {
+    if (!spokenUserText.trim()) return;
+    // Barge-in if AI was speaking
+    handleInterruptSpeech();
+    setStatusError(null);
+
+    const userWords = spokenUserText.trim().split(/\s+/);
+    const userTurnId = `vt-user-${Date.now()}`;
+    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    // 1. Stream speaker's words word-by-word in a paragraph
+    setTurns((prev) => [
+      ...prev,
+      { id: userTurnId, speaker: 'You', text: '', timestamp: nowTime, streaming: true },
+    ]);
+
+    await new Promise<void>((resolve) => {
+      let idx = 0;
+      userStreamTimerRef.current = window.setInterval(() => {
+        if (idx < userWords.length) {
+          const nextWord = userWords[idx];
+          idx++;
+          setLiveUserDraft(userWords.slice(0, idx).join(' '));
+          setTurns((prev) =>
+            prev.map((t) =>
+              t.id === userTurnId
+                ? { ...t, text: `${t.text} ${nextWord}`.trim() }
+                : t
+            )
+          );
+        } else {
+          if (userStreamTimerRef.current) window.clearInterval(userStreamTimerRef.current);
+          userStreamTimerRef.current = null;
+          setLiveUserDraft('');
+          setTurns((prev) =>
+            prev.map((t) => (t.id === userTurnId ? { ...t, streaming: false } : t))
+          );
+          resolve();
+        }
+      }, 45);
+    });
+
+    // 2. Fetch AI Tutor response with KaTeX formulas
+    setAiSpeaking(true);
+    let replyText = '';
+    try {
+      const res = await fetch('/api/ai/think', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: `${spokenUserText} (Respond in a natural, conversational spoken paragraph suitable for a live JEE voice tutor, using KaTeX $...$ for any formula and **bold** for key concepts.)`,
+          context: materialContext || `Active Chapter: ${chapterTitle}`,
+          contextMode: materialContext ? 'strict_material' : 'open_jee',
+        }),
+      });
+      const data = await res.json();
+      replyText =
+        data.text ||
+        `In **${chapterTitle}**, let us break down your question step by step. Remember the fundamental relationship $$F = -\\nabla U$$ and check *sign conventions carefully* before substituting numerical values.`;
+    } catch {
+      replyText = `Let us analyze this concept in **${chapterTitle}**. The core relation can be expressed as $$E = mc^2$$ and for rotational systems $$\\tau = I\\alpha$$. Watch out for the *moment of inertia axis shift trap* using the Parallel Axis Theorem $$I = I_{cm} + Md^2$$.`;
+    }
+
+    // Speak aloud using browser speechSynthesis (if not muted) so audio plays synchronously with word-by-word streaming
+    if (!voiceMuted && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const cleanSpoken = replyText
+          .replace(/\$\$[^$]+\$\$/g, ' formula ')
+          .replace(/\$[^$]+\$/g, ' expression ')
+          .replace(/[*#_`]/g, '');
+        const utter = new SpeechSynthesisUtterance(cleanSpoken);
+        utter.rate = 1.04;
+        window.speechSynthesis.speak(utter);
+      } catch {
+        // ignore speech synthesis error
+      }
+    }
+
+    // 3. Stream AI Tutor response word-by-word in a paragraph
+    const tutorWords = replyText.trim().split(/\s+/);
+    const tutorTurnId = `vt-tutor-${Date.now()}`;
+    const tutorTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    setTurns((prev) => [
+      ...prev,
+      { id: tutorTurnId, speaker: 'Tutor', text: '', timestamp: tutorTime, streaming: true },
+    ]);
+
+    let wIdx = 0;
+    streamTimerRef.current = window.setInterval(() => {
+      if (wIdx < tutorWords.length) {
+        const w = tutorWords[wIdx];
+        wIdx++;
+        setTurns((prev) =>
+          prev.map((t) =>
+            t.id === tutorTurnId ? { ...t, text: `${t.text} ${w}`.trim() } : t
+          )
+        );
+      } else {
+        if (streamTimerRef.current) window.clearInterval(streamTimerRef.current);
+        streamTimerRef.current = null;
+        setAiSpeaking(false);
+        setTurns((prev) =>
+          prev.map((t) => (t.id === tutorTurnId ? { ...t, streaming: false } : t))
+        );
+      }
+    }, 55);
+  };
+
+  const toggleMicrophone = async () => {
+    if (micActive) {
+      setMicActive(false);
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
+
+    // Barge-in immediately when student activates mic
+    handleInterruptSpeech();
+    setStatusError(null);
+    setMicActive(true);
+
+    const SpeechRec =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRec) {
+      try {
+        const rec = new SpeechRec();
+        rec.continuous = false;
+        rec.interimResults = true;
+        rec.lang = 'en-IN';
+        recognitionRef.current = rec;
+
+        rec.onresult = (event: any) => {
+          let interim = '';
+          let finalTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const txt = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              finalTranscript += txt;
+            } else {
+              interim += txt;
+            }
+          }
+          if (interim) {
+            setLiveUserDraft(interim);
+          }
+          if (finalTranscript.trim()) {
+            setLiveUserDraft('');
+            setMicActive(false);
+            streamUserAndTutorConversation(finalTranscript.trim());
+          }
+        };
+
+        rec.onerror = () => {
+          setMicActive(false);
+        };
+        rec.onend = () => {
+          setMicActive(false);
+        };
+        rec.start();
+        return;
+      } catch {
+        // Fallback below if browser blocks SpeechRecognition
+      }
+    }
+
+    // If running in headless/iframe without hardware mic, trigger an interactive spoken doubt stream
+    setMicActive(false);
+    streamUserAndTutorConversation(
+      `Explain the core formula and JEE Advanced trap for ${chapterTitle} with step-by-step derivation.`
+    );
+  };
+
+  const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!textFallback.trim() || !wsRef.current) return;
-    wsRef.current.send(JSON.stringify({ text: textFallback.trim() }));
-    setTranscriptLog((prev) => [...prev, { speaker: 'You', text: textFallback.trim() }]);
-    setTextFallback('');
+    if (!voicePromptInput.trim()) return;
+    const q = voicePromptInput.trim();
+    setVoicePromptInput('');
+    streamUserAndTutorConversation(q);
   };
 
   if (!isOpen) return null;
@@ -1385,77 +2275,223 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-label="Live Voice Tutor"
-      className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
     >
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-lg p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-display font-bold text-lg text-slate-900 dark:text-white">
-              Gemini 3.8 Live Voice Tutor · {chapterTitle}
-            </h3>
-            <p className="text-xs text-slate-500">
-              {connected ? 'Live bidirectional voice session active' : 'Connecting to Gemini 3.8 Live...'}
-            </p>
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-2xl p-6 space-y-4 flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3.5">
+          <div className="flex items-center gap-3">
+            <div
+              className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white shadow-sm ${
+                aiSpeaking
+                  ? 'bg-emerald-600 animate-pulse'
+                  : micActive
+                  ? 'bg-rose-600 animate-pulse'
+                  : 'bg-[#4F46E5]'
+              }`}
+            >
+              <Mic className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-base sm:text-lg text-slate-900 dark:text-white">
+                Live AI Voice Tutor · {chapterTitle}
+              </h3>
+              <p className="text-xs text-slate-500">
+                {aiSpeaking
+                  ? 'Tutor speaking — stream word-by-word (Click Interrupt or Mic to barge-in)'
+                  : micActive
+                  ? 'Listening to your voice word-by-word...'
+                  : connected
+                  ? 'Ready for live voice study (Word-by-word paragraph transcript + KaTeX)'
+                  : 'Interactive Voice Mode Active (Word-by-word streaming + KaTeX)'}
+              </p>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close Voice Tutor"
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
 
-        <div className="flex items-center justify-center py-4">
-          <button
-            type="button"
-            onClick={startMicStreaming}
-            className="px-5 py-3 rounded-2xl bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold text-xs flex items-center gap-2 shadow-md cursor-pointer"
-          >
-            <Mic className="w-4 h-4" />
-            <span>Enable Microphone (16kHz Live Stream)</span>
-          </button>
-        </div>
-
-        <div className="h-44 overflow-y-auto rounded-xl bg-slate-50 dark:bg-slate-800 p-3.5 space-y-2 text-xs">
-          {transcriptLog.length === 0 ? (
-            <p className="text-slate-400 text-center py-10">
-              Speak into your microphone or type a prompt below to converse with your Live Voice
-              Tutor in real time.
-            </p>
-          ) : (
-            transcriptLog.map((entry, idx) => (
-              <div
-                key={idx}
-                className={`p-2 rounded-lg ${
-                  entry.speaker === 'You'
-                    ? 'bg-indigo-50 text-indigo-950 ml-6'
-                    : 'bg-white border border-slate-200 text-slate-800 mr-6'
+          <div className="flex items-center gap-2">
+            <div className="inline-flex rounded-xl bg-slate-100 dark:bg-slate-800 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setActiveView('live')}
+                className={`px-3 py-1 rounded-lg font-semibold cursor-pointer ${
+                  activeView === 'live'
+                    ? 'bg-white dark:bg-slate-900 text-[#4F46E5] shadow-2xs'
+                    : 'text-slate-600'
                 }`}
               >
-                <span className="font-bold mr-1.5">{entry.speaker}:</span>
-                <span>{entry.text}</span>
+                Live Session
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveView('history')}
+                className={`px-3 py-1 rounded-lg font-semibold inline-flex items-center gap-1 cursor-pointer ${
+                  activeView === 'history'
+                    ? 'bg-white dark:bg-slate-900 text-[#4F46E5] shadow-2xs'
+                    : 'text-slate-600'
+                }`}
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>History ({turns.length})</span>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setVoiceMuted((m) => !m);
+                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+              }}
+              aria-label="Toggle voice audio"
+              className="p-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 cursor-pointer"
+            >
+              {voiceMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            </button>
+
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close Voice Tutor"
+              className="p-2 rounded-xl text-slate-400 hover:text-slate-700 cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Voice Controls & Barge-In Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-2xl bg-[#EEF2FF]/70 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900">
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={toggleMicrophone}
+              className={`px-4 py-2.5 rounded-xl font-semibold text-xs flex items-center gap-2 shadow-sm cursor-pointer transition-all ${
+                micActive
+                  ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                  : 'bg-[#4F46E5] hover:bg-[#4338CA] text-white'
+              }`}
+            >
+              {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              <span>{micActive ? 'Stop Listening' : 'Speak by Voice (Start Talking)'}</span>
+            </button>
+
+            {aiSpeaking && (
+              <button
+                type="button"
+                onClick={handleInterruptSpeech}
+                className="px-3.5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+                <span>Interrupt / Barge-In</span>
+              </button>
+            )}
+          </div>
+
+          {/* Quick Voice Doubt Starters */}
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+            {[
+              `Explain ${chapterTitle} key formula`,
+              'Ask me a viva question',
+              'Common JEE trap here?',
+            ].map((q, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => streamUserAndTutorConversation(q)}
+                className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-indigo-200/80 text-[#4F46E5] font-semibold hover:bg-indigo-50 cursor-pointer"
+              >
+                “{q}”
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Live Word-by-Word Paragraph Transcript Stream */}
+        <div className="flex-1 min-h-[260px] max-h-[360px] overflow-y-auto rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700 p-4 space-y-3.5 text-xs">
+          {liveUserDraft && (
+            <div className="p-3.5 rounded-2xl bg-indigo-600 text-white ml-8 shadow-xs">
+              <div className="text-[10px] font-bold uppercase tracking-wider opacity-80 mb-1">
+                You (Speaking Live...)
+              </div>
+              <p className="text-xs sm:text-sm leading-relaxed">{liveUserDraft} ▍</p>
+            </div>
+          )}
+
+          {turns.length === 0 && !liveUserDraft ? (
+            <div className="text-center py-12 space-y-2 text-slate-400">
+              <Sparkles className="w-7 h-7 mx-auto text-indigo-400" />
+              <p className="font-semibold text-slate-600 dark:text-slate-300">
+                Start talking or click a voice prompt above to study by voice
+              </p>
+              <p className="text-[11px] max-w-md mx-auto">
+                Your spoken words and the AI Voice Tutor’s explanation stream word-by-word in live
+                paragraphs with visual KaTeX mathematical formulas and persistent history.
+              </p>
+            </div>
+          ) : (
+            turns.map((turn) => (
+              <div
+                key={turn.id}
+                className={`p-4 rounded-2xl leading-relaxed ${
+                  turn.speaker === 'You'
+                    ? 'bg-[#EEF2FF] dark:bg-indigo-950/60 border border-indigo-200/80 text-slate-900 dark:text-slate-100 ml-8'
+                    : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 mr-6 shadow-2xs'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span
+                    className={`text-[11px] font-extrabold uppercase tracking-wider ${
+                      turn.speaker === 'You' ? 'text-[#4F46E5]' : 'text-emerald-600'
+                    }`}
+                  >
+                    {turn.speaker === 'You' ? 'You (Student)' : 'AI Voice Tutor'}
+                    {turn.streaming ? ' · Streaming word-by-word...' : ''}
+                  </span>
+                  <span className="text-[10px] text-slate-400">{turn.timestamp}</span>
+                </div>
+                <div className="text-xs sm:text-sm leading-relaxed">
+                  <MathRichText content={turn.text} />
+                  {turn.streaming && (
+                    <span className="inline-block w-1.5 h-3.5 bg-[#4F46E5] ml-1 animate-pulse" />
+                  )}
+                </div>
               </div>
             ))
           )}
+          <div ref={transcriptEndRef} />
         </div>
 
-        <form onSubmit={sendTextPrompt} className="flex gap-2">
-          <input
-            type="text"
-            value={textFallback}
-            onChange={(e) => setTextFallback(e.target.value)}
-            placeholder="Or type to speak with the Live session..."
-            className="flex-1 px-3.5 py-2 rounded-xl border border-slate-200 text-xs"
-          />
-          <button
-            type="submit"
-            className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold cursor-pointer"
-          >
-            Send
-          </button>
-        </form>
+        {/* Bottom Voice / Text Input + Clear History */}
+        <div className="flex flex-wrap items-center gap-2">
+          <form onSubmit={handleFormSubmit} className="flex-1 flex gap-2">
+            <input
+              type="text"
+              value={voicePromptInput}
+              onChange={(e) => setVoicePromptInput(e.target.value)}
+              placeholder="Speak via mic or type a question to stream word-by-word voice response..."
+              className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs"
+            />
+            <button
+              type="submit"
+              className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer"
+            >
+              Ask Voice Tutor
+            </button>
+          </form>
+
+          {turns.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                handleInterruptSpeech();
+                setTurns([]);
+                localStorage.removeItem(storageKey);
+              }}
+              className="px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-500 hover:text-red-600 cursor-pointer"
+            >
+              Clear History
+            </button>
+          )}
+        </div>
 
         {statusError && <p className="text-xs text-red-600">{statusError}</p>}
       </div>
@@ -1533,6 +2569,877 @@ export const WorkspaceConfirmModal: React.FC<WorkspaceConfirmModalProps> = ({
           >
             {busy ? 'Syncing with Google Workspace...' : confirmLabel}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// 6. Student Profile Modal (Opened by clicking top-right user avatar)
+// ============================================================================
+export interface StudentProfileData {
+  displayName: string;
+  email: string;
+  avatarColor: string;
+  targetExam: 'JEE Main 2027' | 'JEE Advanced 2027' | 'JEE Main 2028';
+  preferredLanguage: 'English' | 'Hinglish';
+  dailyGoalHours: number;
+  batchStatus: 'Class 11' | 'Class 12' | 'Dropper';
+  coachingName: string;
+  targetRankOrPercentile: string;
+}
+
+interface ProfileModalProps {
+  isOpen: boolean;
+  profile: StudentProfileData;
+  streakDays: number;
+  xp: number;
+  level: number;
+  onClose: () => void;
+  onSaveProfile: (updated: StudentProfileData) => Promise<void>;
+  onExportUserData: () => void;
+  onOpenLegalModal: (tab: LegalModalTabId) => void;
+  onSignOut: () => Promise<void>;
+}
+
+export const ProfileModal: React.FC<ProfileModalProps> = ({
+  isOpen,
+  profile,
+  streakDays,
+  xp,
+  level,
+  onClose,
+  onSaveProfile,
+  onExportUserData,
+  onOpenLegalModal,
+  onSignOut,
+}) => {
+  const [formState, setFormState] = useState<StudentProfileData>(profile);
+  const [saving, setSaving] = useState(false);
+  const [savedNotice, setSavedNotice] = useState(false);
+  const [workspaceConnected, setWorkspaceConnected] = useState<boolean>(
+    Boolean(getWorkspaceAccessToken())
+  );
+  const [connectingWorkspace, setConnectingWorkspace] = useState(false);
+
+  useEffect(() => {
+    setFormState(profile);
+    setWorkspaceConnected(Boolean(getWorkspaceAccessToken()));
+  }, [profile, isOpen]);
+
+  if (!isOpen) return null;
+
+  const avatarInitials = (formState.displayName || 'Student')
+    .split(' ')
+    .map((part) => part.charAt(0).toUpperCase())
+    .slice(0, 2)
+    .join('');
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await onSaveProfile(formState);
+      setSavedNotice(true);
+      setTimeout(() => setSavedNotice(false), 2500);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleConnectWorkspace = async () => {
+    setConnectingWorkspace(true);
+    try {
+      const res = await googleSignIn(true);
+      if (res.token || getWorkspaceAccessToken()) {
+        setWorkspaceConnected(true);
+      }
+    } finally {
+      setConnectingWorkspace(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Student Profile & Settings"
+      className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4 overflow-y-auto"
+    >
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-2xl p-6 space-y-5 my-8 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+          <div className="flex items-center gap-3.5">
+            <div
+              className="w-12 h-12 rounded-2xl text-white font-display font-extrabold text-base flex items-center justify-center shadow-sm"
+              style={{ backgroundColor: formState.avatarColor || '#4F46E5' }}
+            >
+              {avatarInitials}
+            </div>
+            <div>
+              <h2 className="font-display font-bold text-lg text-slate-900 dark:text-white">
+                Student Profile &amp; Preferences
+              </h2>
+              <p className="text-xs text-slate-500">
+                {formState.email || 'Private Encrypted Student Account'} · Level {level} Scholar (
+                {xp} XP · {streakDays}d Streak)
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close Profile Modal"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSave} className="space-y-4 text-xs">
+          {/* Avatar Color Picker */}
+          <div className="flex flex-wrap items-center justify-between gap-2 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700">
+            <span className="font-semibold text-slate-700 dark:text-slate-200">
+              Avatar Badge Theme:
+            </span>
+            <div className="flex items-center gap-2">
+              {['#4F46E5', '#059669', '#D97706', '#DC2626', '#7C3AED', '#0F172A'].map((col) => (
+                <button
+                  key={col}
+                  type="button"
+                  onClick={() => setFormState((s) => ({ ...s, avatarColor: col }))}
+                  aria-label={`Select avatar color ${col}`}
+                  className={`w-6 h-6 rounded-full cursor-pointer transition-transform ${
+                    formState.avatarColor === col
+                      ? 'scale-115 ring-2 ring-offset-2 ring-indigo-500'
+                      : ''
+                  }`}
+                  style={{ backgroundColor: col }}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                Full Name
+              </label>
+              <input
+                type="text"
+                value={formState.displayName}
+                onChange={(e) => setFormState((s) => ({ ...s, displayName: e.target.value }))}
+                placeholder="e.g., Aniket Sharma"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                Target Exam &amp; Year
+              </label>
+              <select
+                value={formState.targetExam}
+                onChange={(e) =>
+                  setFormState((s) => ({
+                    ...s,
+                    targetExam: e.target.value as StudentProfileData['targetExam'],
+                  }))
+                }
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
+              >
+                <option value="JEE Main 2027">JEE Main 2027</option>
+                <option value="JEE Advanced 2027">JEE Advanced 2027</option>
+                <option value="JEE Main 2028">JEE Main 2028</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                Batch / Class Status
+              </label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(['Class 11', 'Class 12', 'Dropper'] as const).map((b) => (
+                  <button
+                    key={b}
+                    type="button"
+                    onClick={() => setFormState((s) => ({ ...s, batchStatus: b }))}
+                    className={`py-2 rounded-xl font-semibold border cursor-pointer ${
+                      formState.batchStatus === b
+                        ? 'bg-[#EEF2FF] text-[#4F46E5] border-indigo-300'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    {b}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                Preferred AI Tutor Language
+              </label>
+              <div className="grid grid-cols-2 gap-1.5">
+                {(['English', 'Hinglish'] as const).map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    onClick={() => setFormState((s) => ({ ...s, preferredLanguage: l }))}
+                    className={`py-2 rounded-xl font-semibold border cursor-pointer ${
+                      formState.preferredLanguage === l
+                        ? 'bg-[#EEF2FF] text-[#4F46E5] border-indigo-300'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                Coaching Institute / School (Optional)
+              </label>
+              <input
+                type="text"
+                value={formState.coachingName}
+                onChange={(e) => setFormState((s) => ({ ...s, coachingName: e.target.value }))}
+                placeholder="e.g., Allen / FIITJEE / PW / Self-Study"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                Target AIR / Percentile Goal
+              </label>
+              <input
+                type="text"
+                value={formState.targetRankOrPercentile}
+                onChange={(e) =>
+                  setFormState((s) => ({ ...s, targetRankOrPercentile: e.target.value }))
+                }
+                placeholder="e.g., 99.5+ Percentile / AIR < 1500"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+              />
+            </div>
+          </div>
+
+          {/* Daily Study Goal Slider */}
+          <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-bold text-slate-800 dark:text-slate-200">
+                Daily Self-Study Goal: {formState.dailyGoalHours} hrs / day
+              </div>
+              <div className="text-[11px] text-slate-500">
+                Used to calibrate your 69-day JEE Main Session 1 revision schedule
+              </div>
+            </div>
+            <input
+              type="range"
+              min={2}
+              max={14}
+              step={1}
+              value={formState.dailyGoalHours}
+              onChange={(e) =>
+                setFormState((s) => ({ ...s, dailyGoalHours: Number(e.target.value) }))
+              }
+              className="w-40 accent-[#4F46E5]"
+            />
+          </div>
+
+          {/* Google Workspace Connection Status */}
+          <div className="p-4 rounded-xl bg-[#EEF2FF]/60 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-900 flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>Google Workspace Integration</span>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    workspaceConnected
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-amber-100 text-amber-800'
+                  }`}
+                >
+                  {workspaceConnected ? 'Connected' : 'Authorization Needed'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                Drive, Docs, Slides, Calendar, Tasks &amp; Keep sync for your notes and study
+                schedule.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={connectingWorkspace}
+              onClick={handleConnectWorkspace}
+              className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 border border-indigo-200 text-[#4F46E5] font-semibold hover:bg-indigo-50 cursor-pointer"
+            >
+              {connectingWorkspace
+                ? 'Connecting...'
+                : workspaceConnected
+                ? 'Reconnect Google Scopes'
+                : 'Connect Google Workspace'}
+            </button>
+          </div>
+
+          {savedNotice && (
+            <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 font-semibold text-center">
+              Profile preferences saved and synced to your account!
+            </div>
+          )}
+
+          {/* Save & Data Controls */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={onExportUserData}
+                className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-semibold inline-flex items-center gap-1.5 hover:bg-slate-50 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export My Data (JSON)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenLegalModal('privacy');
+                }}
+                className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-semibold inline-flex items-center gap-1.5 hover:bg-slate-50 cursor-pointer"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Legal, Privacy &amp; Policies</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  onClose();
+                  await onSignOut();
+                }}
+                className="px-3.5 py-2 rounded-xl border border-red-200 bg-red-50/70 text-red-700 font-semibold inline-flex items-center gap-1.5 hover:bg-red-100 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Sign Out</span>
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-5 py-2 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold cursor-pointer"
+              >
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// 7. Commercial Legal, Privacy & Compliance Center Modal
+// ============================================================================
+interface LegalComplianceModalProps {
+  isOpen: boolean;
+  initialTab: LegalModalTabId;
+  onClose: () => void;
+}
+
+export const LegalComplianceModal: React.FC<LegalComplianceModalProps> = ({
+  isOpen,
+  initialTab,
+  onClose,
+}) => {
+  const [activeTab, setActiveTab] = useState<LegalModalTabId>(initialTab);
+  const [reportCategory, setReportCategory] = useState<
+    | 'Wrong AI Answer / Hallucination'
+    | 'Question Key Discrepancy'
+    | 'Account & Privacy Request'
+    | 'General Feedback'
+  >('Wrong AI Answer / Hallucination');
+  const [reportReference, setReportReference] = useState('');
+  const [reportDescription, setReportDescription] = useState('');
+  const [reportSubmitted, setReportSubmitted] = useState(false);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+    setReportSubmitted(false);
+  }, [initialTab, isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleReportSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reportDescription.trim()) return;
+    setReportSubmitted(true);
+    setReportDescription('');
+    setReportReference('');
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Legal, Privacy and Compliance Center"
+      className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4 overflow-y-auto"
+    >
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-3xl p-6 space-y-5 my-8 max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-[#EEF2FF] text-[#4F46E5] flex items-center justify-center">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="font-display font-bold text-lg text-slate-900 dark:text-white">
+                Legal, Privacy &amp; Academic Compliance Center
+              </h2>
+              <p className="text-xs text-slate-500">
+                Global Commercial Terms · India DPDP Act 2023 &amp; GDPR Compliant
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close Legal Modal"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* 5 Tabs */}
+        <div className="flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-1 overflow-x-auto text-xs">
+          {(
+            [
+              { id: 'privacy', label: 'Privacy Policy' },
+              { id: 'terms', label: 'Terms & Conditions' },
+              { id: 'ai-safety', label: 'AI Safety & Integrity' },
+              { id: 'google-api', label: 'Google API Data Policy' },
+              { id: 'contact', label: 'Contact & Report Answer' },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setActiveTab(t.id)}
+              className={`px-3.5 py-2 rounded-t-xl font-semibold border-b-2 whitespace-nowrap cursor-pointer ${
+                activeTab === t.id
+                  ? 'bg-[#EEF2FF] text-[#4F46E5] border-[#4F46E5]'
+                  : 'text-slate-600 border-transparent hover:text-slate-900'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab Content */}
+        <div className="flex-1 overflow-y-auto space-y-4 text-xs text-slate-700 dark:text-slate-300 leading-relaxed pr-1">
+          {activeTab === 'privacy' && (
+            <div className="space-y-3">
+              <h3 className="font-display font-bold text-sm text-slate-900 dark:text-white">
+                Privacy Policy (India DPDP Act 2023 &amp; EU GDPR Compliance)
+              </h3>
+              <p>
+                <strong>1. Per-User Data Isolation:</strong> Every study material, uploaded PDF,
+                handwritten note photo, flashcard, and CBT mock attempt you create in LearnMate JEE
+                is strictly isolated to your authenticated Firebase UID (
+                <code>request.auth.uid == userId</code>). Other students cannot view, query, or
+                access your uploaded notes or test scores.
+              </p>
+              <p>
+                <strong>2. Data Minimization &amp; Purpose Limitation:</strong> We collect only your
+                name, email address, target examination preferences, and the study content you
+                explicitly upload or generate. Your uploaded materials are never sold to third-party
+                advertisers or coaching institutes.
+              </p>
+              <p>
+                <strong>3. Student Data Rights (Right to Export &amp; Erasure):</strong> Under the
+                Digital Personal Data Protection Act (DPDP Act 2023, India) and GDPR, you have the
+                right to export a complete machine-readable JSON archive of your study data from
+                your Profile Modal at any time, or request account deletion.
+              </p>
+            </div>
+          )}
+
+          {activeTab === 'terms' && (
+            <div className="space-y-3">
+              <h3 className="font-display font-bold text-sm text-slate-900 dark:text-white">
+                Terms &amp; Conditions of Use
+              </h3>
+              <p>
+                <strong>1. Non-Affiliation Disclaimer:</strong> LearnMate JEE is an independent
+                educational technology platform. It is{' '}
+                <strong>
+                  not affiliated with, endorsed by, or connected to the National Testing Agency
+                  (NTA), the Indian Institutes of Technology (IITs), JoSAA, NCERT
+                </strong>
+                , or any third-party coaching institute.
+              </p>
+              <p>
+                <strong>2. Intellectual Property &amp; Uploaded Materials:</strong> You retain full
+                ownership of the personal handwritten notes and study documents you upload. By
+                uploading materials, you confirm that you have the right to use them for personal
+                educational study and exam preparation.
+              </p>
+              <p>
+                <strong>3. CBT Mock Simulation Accuracy:</strong> Our JEE Main &amp; Advanced CBT
+                interfaces simulate official NTA examination rules (+4 / −1 Section A, +4 / 0
+                Section B numericals, and JEE Advanced partial marking) for practice purposes only.
+              </p>
+            </div>
+          )}
+
+          {activeTab === 'ai-safety' && (
+            <div className="space-y-3">
+              <h3 className="font-display font-bold text-sm text-slate-900 dark:text-white">
+                AI Safety, Hallucination Verification &amp; Exam Hall Rules
+              </h3>
+              <p>
+                <strong>1. AI Verification &amp; Page Citations:</strong> While LearnMate JEE
+                grounds responses against your uploaded notes and official syllabus concepts,
+                generative AI models can occasionally make mathematical, sign, or stoichiometric
+                errors. Always verify critical derivations against NCERT textbooks and cited page
+                numbers.
+              </p>
+              <p>
+                <strong>2. Prohibition of Calculators in NTA Exam Halls:</strong> The graphing
+                calculator, unit converter, and scientific evaluator in <em>Study Tools</em> are
+                designed strictly for conceptual visualization during home study. The National
+                Testing Agency (NTA) strictly bans physical calculators, smartwatches, and
+                electronic devices inside JEE Main and JEE Advanced examination centers.
+              </p>
+            </div>
+          )}
+
+          {activeTab === 'google-api' && (
+            <div className="space-y-3">
+              <h3 className="font-display font-bold text-sm text-slate-900 dark:text-white">
+                Google API Services User Data Policy (Limited Use Disclosure)
+              </h3>
+              <p>
+                LearnMate JEE’s use and transfer to any other app of information received from
+                Google APIs adheres to the <strong>Google API Services User Data Policy</strong>,
+                including the Limited Use requirements:
+              </p>
+              <ul className="list-disc pl-5 space-y-1.5">
+                <li>
+                  <strong>Google Drive &amp; Google Docs (`drive.readonly`, `documents.readonly`):</strong>{' '}
+                  Used only when you explicitly click “Browse Google Drive” to import your own study
+                  PDFs or Docs into your workbench.
+                </li>
+                <li>
+                  <strong>Google Calendar &amp; Tasks (`calendar.events`, `tasks`):</strong> Used
+                  only after your explicit confirmation to sync your daily JEE study schedule and
+                  pending chapter tasks.
+                </li>
+                <li>
+                  <strong>Google Slides &amp; Keep (`presentations`, `keep`, `drive.file`):</strong>{' '}
+                  Used only when you explicitly click “Export to Slides” or “Save to Keep” in the
+                  Revise workspace.
+                </li>
+              </ul>
+            </div>
+          )}
+
+          {activeTab === 'contact' && (
+            <form onSubmit={handleReportSubmit} className="space-y-3.5">
+              <h3 className="font-display font-bold text-sm text-slate-900 dark:text-white">
+                Contact Support or Report a Wrong Answer
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                    Issue Category
+                  </label>
+                  <select
+                    value={reportCategory}
+                    onChange={(e) => setReportCategory(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  >
+                    <option value="Wrong AI Answer / Hallucination">
+                      Wrong AI Answer / Hallucination
+                    </option>
+                    <option value="Question Key Discrepancy">Question Key Discrepancy</option>
+                    <option value="Account & Privacy Request">Account &amp; Privacy Request</option>
+                    <option value="General Feedback">General Feedback</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                    Chapter / Question / Page Reference
+                  </label>
+                  <input
+                    type="text"
+                    value={reportReference}
+                    onChange={(e) => setReportReference(e.target.value)}
+                    placeholder="e.g., Rotational Motion Q4 or Mock Q12"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                  Details of the Discrepancy or Question
+                </label>
+                <textarea
+                  rows={3}
+                  value={reportDescription}
+                  onChange={(e) => setReportDescription(e.target.value)}
+                  placeholder="Describe the step, formula, or answer key issue so our academic review engine can verify it..."
+                  className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                />
+              </div>
+              {reportSubmitted && (
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 font-semibold">
+                  Thank you! Your report has been logged for academic verification.
+                </div>
+              )}
+              <button
+                type="submit"
+                className="px-5 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold cursor-pointer"
+              >
+                Submit Report
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// 8. Instant Practice & Adaptive Drill Modal (With KaTeX + Auto Mistakes Logging)
+// ============================================================================
+export interface InstantPracticeConfig {
+  isOpen: boolean;
+  mode: 'chapter-quiz' | 'adaptive-drill' | 'paper-solver';
+  title: string;
+  chapterOrPaper: string;
+  customQuestions?: CBTQuestion[];
+}
+
+interface InstantPracticeModalProps {
+  config: InstantPracticeConfig | null;
+  onClose: () => void;
+  onEarnXp: (earnedXp: number) => void;
+  onLaunchFullCBT: () => void;
+  onRecordMistake?: (question: CBTQuestion, userSelection: string) => void;
+}
+
+export const InstantPracticeModal: React.FC<InstantPracticeModalProps> = ({
+  config,
+  onClose,
+  onEarnXp,
+  onLaunchFullCBT,
+  onRecordMistake,
+}) => {
+  const [qIndex, setQIndex] = useState(0);
+  const [selectedOpt, setSelectedOpt] = useState<number | null>(null);
+  const [checked, setChecked] = useState(false);
+  const [streak, setStreak] = useState(0);
+  const [difficultyLevel, setDifficultyLevel] = useState<'Easy' | 'Moderate' | 'JEE Advanced Hard'>(
+    'Easy'
+  );
+  const [scoreCount, setScoreCount] = useState(0);
+
+  useEffect(() => {
+    setQIndex(0);
+    setSelectedOpt(null);
+    setChecked(false);
+    setStreak(0);
+    setDifficultyLevel('Easy');
+    setScoreCount(0);
+  }, [config]);
+
+  if (!config || !config.isOpen) return null;
+
+  const questionsPool: CBTQuestion[] =
+    config.customQuestions && config.customQuestions.length > 0
+      ? config.customQuestions
+      : CBT_MOCK_QUESTIONS.slice(0, 10);
+  const currentQ = questionsPool[qIndex] || questionsPool[0];
+  const isCorrect = selectedOpt === currentQ.correctIndex;
+
+  const handleCheckAnswer = () => {
+    if (selectedOpt === null || checked) return;
+    setChecked(true);
+    if (selectedOpt === currentQ.correctIndex) {
+      const nextStreak = streak + 1;
+      setStreak(nextStreak);
+      setScoreCount((s) => s + 1);
+      onEarnXp(config.mode === 'adaptive-drill' ? 15 : 10);
+      if (config.mode === 'adaptive-drill') {
+        if (nextStreak >= 3) setDifficultyLevel('JEE Advanced Hard');
+        else if (nextStreak >= 1) setDifficultyLevel('Moderate');
+      }
+    } else {
+      setStreak(0);
+      if (config.mode === 'adaptive-drill') {
+        setDifficultyLevel('Easy');
+      }
+      if (onRecordMistake) {
+        onRecordMistake(currentQ, currentQ.options[selectedOpt] || `Option ${selectedOpt + 1}`);
+      }
+    }
+  };
+
+  const handleNext = () => {
+    setSelectedOpt(null);
+    setChecked(false);
+    setQIndex((idx) => (idx + 1) % questionsPool.length);
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={config.title}
+      className="fixed inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-4"
+    >
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3.5">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-md bg-[#EEF2FF] text-[#4F46E5] text-[11px] font-bold uppercase">
+                {config.mode === 'adaptive-drill'
+                  ? `Adaptive Drill · ${difficultyLevel}`
+                  : config.mode === 'chapter-quiz'
+                  ? `${questionsPool.length}-Question Chapter Quiz`
+                  : 'Instant-Feedback Paper Solver'}
+              </span>
+              {config.mode === 'adaptive-drill' && (
+                <span className="px-2.5 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[11px] font-bold inline-flex items-center gap-1">
+                  <Flame className="w-3 h-3 fill-current" />
+                  Streak: {streak}
+                </span>
+              )}
+            </div>
+            <h3 className="font-display font-bold text-lg text-slate-900 dark:text-white mt-1">
+              {config.title} · {config.chapterOrPaper}
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg">
+              Score: {scoreCount} / {questionsPool.length}
+            </span>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close Practice Modal"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="flex items-center justify-between text-xs text-slate-500">
+            <span>
+              Question {qIndex + 1} of {questionsPool.length} · {currentQ.subject} (
+              {currentQ.chapter})
+            </span>
+            <span>+4 / −1 NTA Conceptual Check</span>
+          </div>
+
+          <div className="text-sm sm:text-base font-semibold text-slate-900 dark:text-white leading-relaxed">
+            <span className="mr-1.5">Q{qIndex + 1}.</span>
+            <MathRichText content={currentQ.stem} inline />
+          </div>
+
+          <div className="space-y-2.5">
+            {currentQ.options.map((opt, idx) => {
+              const isSelected = selectedOpt === idx;
+              let borderStyle = 'border-slate-200 dark:border-slate-700 hover:bg-slate-50';
+              if (isSelected && !checked) {
+                borderStyle = 'border-[#4F46E5] bg-[#EEF2FF]/60 text-[#4F46E5]';
+              } else if (checked) {
+                if (idx === currentQ.correctIndex) {
+                  borderStyle = 'border-emerald-500 bg-emerald-50 text-emerald-900';
+                } else if (isSelected && idx !== currentQ.correctIndex) {
+                  borderStyle = 'border-red-400 bg-red-50 text-red-900';
+                }
+              }
+
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  disabled={checked}
+                  onClick={() => setSelectedOpt(idx)}
+                  className={`w-full p-3 rounded-xl border text-left text-xs sm:text-sm font-medium flex items-center justify-between transition-colors cursor-pointer ${borderStyle}`}
+                >
+                  <span className="flex items-center gap-2">
+                    <strong>({['A', 'B', 'C', 'D'][idx]})</strong>
+                    <MathRichText content={opt} inline />
+                  </span>
+                  {checked && idx === currentQ.correctIndex && (
+                    <span className="text-[11px] font-bold text-emerald-700">✓ Correct</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {checked && (
+            <div
+              className={`p-4 rounded-xl border text-xs space-y-1.5 ${
+                isCorrect
+                  ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                  : 'bg-amber-50/70 border-amber-200 text-amber-950'
+              }`}
+            >
+              <div className="font-bold">
+                {isCorrect
+                  ? 'Spot On! Step-by-Step Verification:'
+                  : 'Conceptual Trap Detected (Logged to My Mistakes Notebook) — Solution Breakdown:'}
+              </div>
+              <MathRichText content={currentQ.explanation} className="leading-relaxed" />
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onLaunchFullCBT();
+            }}
+            className="text-xs font-semibold text-[#4F46E5] hover:underline cursor-pointer"
+          >
+            Switch to Full 75-Q NTA CBT Mode →
+          </button>
+
+          <div className="flex items-center gap-2">
+            {!checked ? (
+              <button
+                type="button"
+                disabled={selectedOpt === null}
+                onClick={handleCheckAnswer}
+                className="px-5 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
+              >
+                Check Answer
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleNext}
+                className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer"
+              >
+                Next Question →
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

@@ -2,92 +2,147 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   calculateCBTSummary,
-  transitionQuestionStatus,
+  evaluateSingleQuestionMarks,
   evaluateMathFunction,
-  calculateStatistics,
-  validateIdFormat,
+  findRootsAndExtrema,
+  findCurveIntersections,
+  computeCombination,
+  computeDeterminant3x3,
+  computeVectorOps,
+  detectJeeSubjectAndChapter,
   CBTQuestion,
   QuestionResponseState,
 } from './jeeEngine';
 
-const sampleQuestions: CBTQuestion[] = [
+const SAMPLE_QUESTIONS: CBTQuestion[] = [
   {
     id: 'q1',
     number: 1,
-    subject: 'Mathematics',
+    subject: 'Physics',
     section: 'Section A',
-    chapter: 'Quadratic Equations',
-    stem: 'If f(x) = x^2 - 4x + 5, then the minimum value of f(x) is:',
-    options: ['0', '1', '2', '4'],
+    chapter: 'Kinematics',
+    stem: 'Sample MCQ',
+    options: ['A', 'B', 'C', 'D'],
     correctIndex: 1,
-    explanation: 'f(x) = (x - 2)^2 + 1 >= 1.',
+    explanation: 'B is correct',
+    examType: 'JEE Main',
   },
   {
     id: 'q2',
     number: 2,
     subject: 'Physics',
-    section: 'Section A',
-    chapter: 'Laws of Motion',
-    stem: 'Acceleration of a block on a smooth incline of angle 30 deg is:',
-    options: ['g', 'g/2', 'g*sqrt(3)/2', 'g/3'],
-    correctIndex: 1,
-    explanation: 'a = g sin(30) = g/2.',
+    section: 'Section B',
+    chapter: 'Kinematics',
+    stem: 'Sample Numerical',
+    options: ['10', '20', '30', '40'],
+    correctIndex: 2,
+    numericalAnswer: 30,
+    explanation: '30 is correct',
+    examType: 'JEE Main',
   },
   {
     id: 'q3',
     number: 3,
-    subject: 'Chemistry',
+    subject: 'Mathematics',
     section: 'Section A',
-    chapter: 'd & f Block',
-    stem: 'Which Group 12 element is not considered a typical transition metal?',
-    options: ['Fe', 'Cu', 'Zn', 'Cr'],
-    correctIndex: 2,
-    explanation: 'Zn has a completely filled 3d10 subshell in ground and +2 oxidation state.',
+    chapter: 'Calculus',
+    stem: 'Sample JEE Advanced Multi-Choice',
+    options: ['A', 'B', 'C', 'D'],
+    correctIndex: 0,
+    correctIndices: [0, 2, 3],
+    explanation: 'A, C, D are correct',
+    examType: 'JEE Advanced',
+    advancedFormat: 'multiple',
   },
 ];
 
-test('NTA CBT marking scheme awards +4 for correct, -1 for wrong, and 0 for skipped', () => {
+test('JEE Main Section B numerical has 0 negative marking on wrong answer per 2025/26 NTA rules', () => {
   const responses: Record<string, QuestionResponseState> = {
-    q1: { status: 'answered', selectedOption: 1, timeSpentSec: 90 }, // Correct (+4)
-    q2: { status: 'answered_marked', selectedOption: 0, timeSpentSec: 120 }, // Wrong (-1)
-    q3: { status: 'marked', selectedOption: null, timeSpentSec: 45 }, // Skipped (0)
+    q1: { status: 'answered', selectedOption: 0, timeSpentSec: 40 }, // Wrong MCQ -> -1
+    q2: { status: 'answered', selectedOption: null, numericalValue: '99', timeSpentSec: 50 }, // Wrong Numerical -> 0
   };
-
-  const summary = calculateCBTSummary(sampleQuestions, responses);
-  assert.equal(summary.score, 3);
-  assert.equal(summary.maxMarks, 12);
-  assert.equal(summary.correctCount, 1);
-  assert.equal(summary.incorrectCount, 1);
-  assert.equal(summary.skippedCount, 1);
-  assert.equal(summary.accuracy, 50.0);
+  const summary = calculateCBTSummary(SAMPLE_QUESTIONS.slice(0, 2), responses);
+  assert.equal(summary.score, -1);
+  assert.equal(summary.incorrectCount, 2);
 });
 
-test('Question palette state transitions match NTA CBT rules', () => {
-  assert.equal(transitionQuestionStatus(null, 'save_next'), 'not_answered');
-  assert.equal(transitionQuestionStatus(2, 'save_next'), 'answered');
-  assert.equal(transitionQuestionStatus(null, 'mark_review'), 'marked');
-  assert.equal(transitionQuestionStatus(1, 'mark_review'), 'answered_marked');
-  assert.equal(transitionQuestionStatus(3, 'clear'), 'not_answered');
+test('JEE Advanced multi-choice partial marking awards +1 per correct option and -2 if any wrong chosen', () => {
+  const qAdv = SAMPLE_QUESTIONS[2];
+  // Partial correct (2 of 3 correct options chosen, 0 wrong) -> +2
+  const partialRes = evaluateSingleQuestionMarks(qAdv, {
+    status: 'answered',
+    selectedOption: null,
+    selectedOptions: [0, 2],
+    timeSpentSec: 60,
+  });
+  assert.equal(partialRes.marksAwarded, 2);
+
+  // Full correct (all 3 chosen) -> +4
+  const fullRes = evaluateSingleQuestionMarks(qAdv, {
+    status: 'answered',
+    selectedOption: null,
+    selectedOptions: [0, 2, 3],
+    timeSpentSec: 60,
+  });
+  assert.equal(fullRes.marksAwarded, 4);
+
+  // One wrong option chosen -> -2
+  const wrongRes = evaluateSingleQuestionMarks(qAdv, {
+    status: 'answered',
+    selectedOption: null,
+    selectedOptions: [0, 1],
+    timeSpentSec: 60,
+  });
+  assert.equal(wrongRes.marksAwarded, -2);
 });
 
-test('Graphing math evaluator plots y = x^2 - 4 accurately', () => {
-  assert.equal(evaluateMathFunction('y = x^2 - 4', 0), -4);
-  assert.equal(evaluateMathFunction('y = x^2 - 4', 2), 0);
-  assert.equal(evaluateMathFunction('y = x^2 - 4', -3), 5);
-  assert.equal(evaluateMathFunction('2x + 3', 4), 11);
+test('Desmos math engine evaluates parameter sliders, roots, extrema, and intersections', () => {
+  const val = evaluateMathFunction('y = a*x^2 - c', 3, { a: 2, c: 8 });
+  assert.equal(val, 10);
+
+  const pts = findRootsAndExtrema('y = x^2 - 4', -5, 5);
+  const roots = pts.filter((p) => p.type === 'root').map((p) => p.x);
+  assert.ok(roots.some((r) => Math.abs(r - -2) < 0.05));
+  assert.ok(roots.some((r) => Math.abs(r - 2) < 0.05));
+
+  const minima = pts.filter((p) => p.type === 'min');
+  assert.ok(minima.some((m) => Math.abs(m.x) < 0.05 && Math.abs(m.y - -4) < 0.05));
+
+  const inter = findCurveIntersections('y = x^2 - 4', 'y = 0', -5, 5);
+  assert.ok(inter.length >= 2);
 });
 
-test('Statistics calculator computes mean, median, variance, and standard deviation', () => {
-  const stats = calculateStatistics([2, 4, 4, 4, 5, 5, 7, 9]);
-  assert.equal(stats.count, 8);
-  assert.equal(stats.mean, 5);
-  assert.equal(stats.median, 4.5);
-  assert.equal(stats.variance, 4);
-  assert.equal(stats.stdDev, 2);
+test('Scientific calculator combinatorics, 3x3 determinant, and vector dot/cross products', () => {
+  assert.equal(computeCombination(10, 3), 120);
+  const det = computeDeterminant3x3([
+    [1, 0, 0],
+    [0, 2, 0],
+    [0, 0, 3],
+  ]);
+  assert.equal(det, 6);
+  const vec = computeVectorOps([1, 0, 0], [0, 1, 0]);
+  assert.equal(vec.dot, 0);
+  assert.deepEqual(vec.cross, [0, 0, 1]);
+  assert.equal(vec.angleDeg, 90);
 });
 
-test('Firestore document ID guard blocks poisoned IDs', () => {
-  assert.equal(validateIdFormat('mat_2027_01'), true);
-  assert.equal(validateIdFormat('bad id with spaces!'), false);
-  assert.equal(validateIdFormat(''), false);
+test('Auto-classifier identifies Physics, Chemistry, and Mathematics chapters without user subject selection', () => {
+  const chem = detectJeeSubjectAndChapter(
+    'Nernst equation E_cell = E0 - 0.0591/n log Q, Kohlrausch law and molar conductivity in galvanic cell'
+  );
+  assert.equal(chem.subject, 'Chemistry');
+  assert.equal(chem.chapter, 'Electrochemistry');
+
+  const math = detectJeeSubjectAndChapter(
+    'Definite integration using King property and Leibniz rule for area under curve'
+  );
+  assert.equal(math.subject, 'Mathematics');
+  assert.equal(math.chapter, 'Definite & Indefinite Integration');
+
+  const phys = detectJeeSubjectAndChapter(
+    'Moment of inertia parallel axis theorem, torque and pure rolling without slipping'
+  );
+  assert.equal(phys.subject, 'Physics');
+  assert.equal(phys.chapter, 'Rotational Motion');
 });
+

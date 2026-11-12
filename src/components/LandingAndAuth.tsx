@@ -19,11 +19,14 @@ import {
 } from 'lucide-react';
 import { googleSignIn, emailSignIn, emailSignUp } from '../firebase';
 
+export type LegalModalTabId = 'privacy' | 'terms' | 'ai-safety' | 'google-api' | 'contact';
+
 interface LandingPageProps {
   onOpenAuth: (mode: 'signin' | 'signup') => void;
+  onOpenLegal: (tab: LegalModalTabId) => void;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onOpenLegal }) => {
   const [sampleLang, setSampleLang] = useState<'English' | 'Hinglish'>('English');
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [quickQuestion, setQuickQuestion] = useState<string>('');
@@ -140,15 +143,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
               <button
                 type="button"
                 onClick={() => onOpenAuth('signup')}
-                className="px-5 py-3.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold text-sm flex items-center gap-2.5 shadow-sm transition-colors cursor-pointer"
-              >
-                <BookOpen className="w-4 h-4" />
-                <span>Try the free sample chapter</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onOpenAuth('signup')}
-                className="px-5 py-3.5 rounded-xl bg-white hover:bg-slate-50 text-slate-900 font-semibold text-sm border border-slate-200 flex items-center gap-2 transition-colors cursor-pointer"
+                className="px-6 py-3.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold text-sm flex items-center gap-2.5 shadow-sm transition-colors cursor-pointer"
               >
                 <span>Create free account</span>
                 <ArrowRight className="w-4 h-4" />
@@ -418,22 +413,45 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
         </button>
       </div>
 
-      {/* Footer matching Screenshot 14 */}
+      {/* Footer matching Screenshot 14 with interactive Legal & Compliance Center triggers */}
       <footer className="max-w-[1280px] w-full mx-auto px-6 py-10 text-xs text-slate-500 space-y-4">
         <div className="flex flex-wrap items-center gap-6 font-medium text-slate-700">
           <span className="font-display font-bold text-slate-900">LearnMate</span>
-          <a href="#how-it-works" className="hover:text-slate-900">
-            Privacy
-          </a>
-          <a href="#how-it-works" className="hover:text-slate-900">
-            Terms
-          </a>
-          <a href="#faq" className="hover:text-slate-900">
-            Contact
-          </a>
-          <a href="#faq" className="hover:text-slate-900">
-            AI & safety
-          </a>
+          <button
+            type="button"
+            onClick={() => onOpenLegal('privacy')}
+            className="hover:text-[#4F46E5] transition-colors cursor-pointer"
+          >
+            Privacy Policy
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenLegal('terms')}
+            className="hover:text-[#4F46E5] transition-colors cursor-pointer"
+          >
+            Terms &amp; Conditions
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenLegal('ai-safety')}
+            className="hover:text-[#4F46E5] transition-colors cursor-pointer"
+          >
+            AI &amp; Safety Policy
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenLegal('google-api')}
+            className="hover:text-[#4F46E5] transition-colors cursor-pointer"
+          >
+            Google API Disclosure
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenLegal('contact')}
+            className="hover:text-[#4F46E5] transition-colors cursor-pointer"
+          >
+            Contact &amp; Report Answer
+          </button>
         </div>
         <p className="leading-relaxed max-w-3xl text-[11px] text-slate-400">
           LearnMate is an independent study tool for JEE aspirants. It is not affiliated with the
@@ -442,7 +460,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth }) => {
           calculators and all electronic devices in the exam hall.
         </p>
         <p className="text-[11px] text-slate-400">
-          © 2026 LearnMate · Built for JEE Main 2027 Session 1
+          © 2026 LearnMate · Built for JEE Main 2027 Session 1 · GDPR &amp; India DPDP Act 2023 Compliant
         </p>
       </footer>
     </div>
@@ -453,6 +471,7 @@ interface AuthScreenProps {
   initialMode: 'signin' | 'signup';
   onBackToLanding: () => void;
   onAuthComplete: () => void;
+  onOpenLegal?: (tab: LegalModalTabId) => void;
 }
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({
@@ -471,8 +490,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     setErrorMsg(null);
     setLoading(true);
     try {
-      await googleSignIn();
-      onAuthComplete();
+      const outcome = await googleSignIn(false);
+      if (outcome.user) {
+        onAuthComplete();
+      } else if (outcome.cancelled) {
+        setErrorMsg(
+          outcome.errorCode === 'auth/popup-blocked'
+            ? 'Your browser blocked the sign-in popup. Please allow popups for this site or sign in with your email below.'
+            : 'Google Sign-In window was closed before completing. Click "Continue with Google" to try again, or sign in with your email below.'
+        );
+      } else if (outcome.errorMessage) {
+        setErrorMsg(outcome.errorMessage);
+      }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Google Sign-In could not be completed. Please try again.');
     } finally {

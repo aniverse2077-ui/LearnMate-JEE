@@ -10,7 +10,10 @@ export interface DriveFileItem {
 async function ensureToken(): Promise<string> {
   let token = await getAccessToken();
   if (!token) {
-    const res = await googleSignIn();
+    const res = await googleSignIn(true);
+    if (res.cancelled) {
+      throw new Error('Google Workspace authorization window was closed before completing.');
+    }
     token = res.accessToken;
   }
   if (!token) {

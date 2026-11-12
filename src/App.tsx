@@ -1,10 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  BookOpen,
   Home,
-  BookMarked,
+  BookOpen,
   Target,
-  ListChecks,
+  Layers,
   BarChart3,
   Plus,
   Search,
@@ -14,21 +13,10 @@ import {
   Moon,
   Bell,
   HelpCircle,
-  LogOut,
+  GraduationCap,
+  CheckCircle2,
   X,
 } from 'lucide-react';
-import { User } from 'firebase/auth';
-import {
-  collection,
-  doc,
-  setDoc,
-  addDoc,
-  updateDoc,
-  onSnapshot,
-  query,
-  where,
-  getDoc,
-} from 'firebase/firestore';
 import {
   db,
   initAuth,
@@ -36,7 +24,18 @@ import {
   handleFirestoreError,
   OperationType,
 } from './firebase';
-import { LandingPage, AuthScreen } from './components/LandingAndAuth';
+import { User as FirebaseUser } from 'firebase/auth';
+import {
+  doc,
+  setDoc,
+  getDoc,
+  collection,
+  onSnapshot,
+  query,
+  orderBy,
+} from 'firebase/firestore';
+
+import { LandingPage, AuthScreen, LegalModalTabId } from './components/LandingAndAuth';
 import {
   HomeDashboardView,
   StudyWorkspaceView,
@@ -49,6 +48,7 @@ import {
   PracticeDashboardView,
   ProgressDashboardView,
   CBTMockExamView,
+  MistakeNotebookEntry,
 } from './components/RevisePracticeProgressCBT';
 import {
   AddMaterialModal,
@@ -56,289 +56,420 @@ import {
   FocusTimerModal,
   LiveVoiceTutorModal,
   WorkspaceConfirmModal,
+  ProfileModal,
+  LegalComplianceModal,
+  InstantPracticeModal,
+  StudentProfileData,
+  InstantPracticeConfig,
 } from './components/GlobalOverlays';
 import {
-  syncStudyTasksWithCalendarAndTasks,
-  exportMindMapToGoogleSlides,
-  exportRevisionToGoogleKeepOrDrive,
-} from './services/workspaceService';
-import { MindMapNodeItem, DIAGRAM_SVG_PRESETS } from './data/jeeInitialContent';
-import { CBTMockSummary } from './utils/jeeEngine';
+  MindMapNodeItem,
+  MaterialStudyBundle,
+  NotePageData,
+  generateMaterialStudyBundle,
+} from './data/jeeInitialContent';
+import { CBTMockSummary, CBTQuestion } from './utils/jeeEngine';
+import { syncStudyTasksWithCalendarAndTasks } from './services/workspaceService';
 
-const DEFAULT_MATERIALS: MaterialItem[] = [
-  {
-    id: 'mat-df-block',
-    title: 'd & f Block – Handwritten Notes',
-    subject: 'Chemistry',
-    chapter: 'd & f Block',
-    sourceType: 'pdf',
-    pageCount: 13,
-    currentPage: 2,
-    progressPct: 15,
-    contentSummary:
-      'Transition elements (d-block) definition, variable oxidation states, magnetic moment, Group 12 exception, and Lanthanoid contraction.',
-    addedLabel: 'Today',
-  },
-  {
-    id: 'mat-electrochem',
-    title: 'Electrochemistry – Video Notes',
-    subject: 'Chemistry',
-    chapter: 'Electrochemistry',
-    sourceType: 'youtube',
-    pageCount: 10,
-    currentPage: 1,
-    progressPct: 35,
-    contentSummary: 'Nernst equation, standard electrode potentials, and Kohlrausch law.',
-    addedLabel: 'Yesterday',
-  },
-];
+type PrimaryTab = 'Home' | 'Study' | 'Practice' | 'Revise' | 'Progress';
 
-const DEFAULT_TASKS: StudyTaskItem[] = [
-  {
-    id: 'task-1',
-    title: 'Revise d & f Block – Handwritten Notes',
-    durationMin: 15,
-    completed: false,
-    dueDate: '2026-11-12',
-  },
-  {
-    id: 'task-2',
-    title: 'Attempt 10 Electrochemistry PYQs',
-    durationMin: 20,
-    completed: false,
-    dueDate: '2026-11-12',
-  },
-];
+export function App() {
+  // Authentication & View Routing State
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [unauthScreen, setUnauthScreen] = useState<'landing' | 'auth'>('landing');
+  const [authInitialMode, setAuthInitialMode] = useState<'signin' | 'signup'>('signup');
 
-const DEFAULT_CREATIONS: CreationItem[] = [
-  {
-    id: 'creat-incline',
-    type: 'diagram',
-    title: 'Inclined Plane Free-Body Diagram',
-    prompt:
-      'Free-body diagram of a block on an inclined plane, show only gravity (down) and normal (perpendicular to incline).',
-    subject: 'Physics',
-    preset: 'Incline',
-    assetData: DIAGRAM_SVG_PRESETS.Incline,
-    resolutionOrRatio: '2D SVG',
-  },
-];
-
-export default function App() {
-  // Check for ?autostart=1 query param used by automated browser verification
-  const isAutoStart =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('autostart') === '1';
-
-  const [authStage, setAuthStage] = useState<'landing' | 'auth' | 'workspace'>(
-    isAutoStart ? 'workspace' : 'landing'
-  );
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signup');
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-
-  // Primary Workspace Navigation
-  const [activeNav, setActiveNav] = useState<
-    'Home' | 'Study' | 'Practice' | 'Revise' | 'Progress' | 'CBT_MOCK'
-  >('Home');
-  const [studyInitialSubTab, setStudyInitialSubTab] = useState<
+  // Primary Navigation & Full-screen CBT Mode
+  const [activeTab, setActiveTab] = useState<PrimaryTab>('Home');
+  const [studySubTab, setStudySubTab] = useState<
     'Syllabus' | 'Chapter Notes' | 'My Materials' | 'AI Tutor' | 'Create' | 'Resources'
   >('Chapter Notes');
+  const [selectedMaterial, setSelectedMaterial] = useState<MaterialItem | null>(null);
+  const [inCBTMockMode, setInCBTMockMode] = useState<boolean>(false);
+  const [cbtExamMode, setCbtExamMode] = useState<'JEE Main' | 'JEE Advanced'>('JEE Main');
 
-  // Theme & Global Modals
-  const [darkMode, setDarkMode] = useState(false);
-  const [addMaterialOpen, setAddMaterialOpen] = useState(false);
+  // Global Overlays State
+  const [addMaterialOpen, setAddMaterialOpen] = useState<boolean>(false);
   const [addMaterialInitialTab, setAddMaterialInitialTab] = useState<
     'pdf' | 'photo' | 'youtube' | 'text' | 'drive'
   >('youtube');
-  const [studyToolsOpen, setStudyToolsOpen] = useState(false);
-  const [focusModalOpen, setFocusModalOpen] = useState(false);
-  const [voiceTutorOpen, setVoiceTutorOpen] = useState(false);
-  const [searchModalOpen, setSearchModalOpen] = useState(false);
-  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+  const [studyToolsOpen, setStudyToolsOpen] = useState<boolean>(false);
+  const [focusTimerOpen, setFocusTimerOpen] = useState<boolean>(false);
+  const [focusSecondsLeft, setFocusSecondsLeft] = useState<number>(25 * 60);
+  const [focusRunning, setFocusRunning] = useState<boolean>(false);
+  const [searchModalOpen, setSearchModalOpen] = useState<boolean>(false);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState<string>('');
+  const [voiceTutorOpen, setVoiceTutorOpen] = useState<boolean>(false);
+  const [profileModalOpen, setProfileModalOpen] = useState<boolean>(false);
+  const [notificationsOpen, setNotificationsOpen] = useState<boolean>(false);
+  const [workspaceSyncConfirmOpen, setWorkspaceSyncConfirmOpen] = useState<boolean>(false);
+  const [legalModalState, setLegalModalState] = useState<{
+    isOpen: boolean;
+    tab: LegalModalTabId;
+  }>({
+    isOpen: false,
+    tab: 'privacy',
+  });
+  const [instantPracticeConfig, setInstantPracticeConfig] =
+    useState<InstantPracticeConfig | null>(null);
+  const [darkMode, setDarkMode] = useState<boolean>(false);
+
+  // 100% Clean Zero-State User Data (Zero preloaded materials or tasks; keep only PYQs)
+  const [materials, setMaterials] = useState<MaterialItem[]>([]);
+  const [materialBundles, setMaterialBundles] = useState<Record<string, MaterialStudyBundle>>({});
+  const [tasks, setTasks] = useState<StudyTaskItem[]>([]);
+  const [creations, setCreations] = useState<CreationItem[]>([]);
+  const [mistakesNotebook, setMistakesNotebook] = useState<MistakeNotebookEntry[]>(() => {
+    try {
+      const raw = localStorage.getItem('learnmate_mistakes_notebook');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [streakDays, setStreakDays] = useState<number>(0);
+  const [xp, setXp] = useState<number>(0);
+  const [level, setLevel] = useState<number>(1);
+  const [lastMockScore, setLastMockScore] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Focus 25:00 Pomodoro Timer State
-  const [focusSeconds, setFocusSeconds] = useState(25 * 60);
-  const [focusRunning, setFocusRunning] = useState(false);
+  // Student Profile State
+  const [studentProfile, setStudentProfile] = useState<StudentProfileData>({
+    displayName: 'JEE Aspirant',
+    email: '',
+    avatarColor: '#4F46E5',
+    targetExam: 'JEE Main 2027',
+    preferredLanguage: 'English',
+    dailyGoalHours: 6,
+    batchStatus: 'Class 12',
+    coachingName: 'Self-Study + LearnMate JEE',
+    targetRankOrPercentile: '99.5+ Percentile / AIR < 1500',
+  });
 
-  // Student Workspace Data (synced with Firestore when authenticated)
-  const [materials, setMaterials] = useState<MaterialItem[]>(DEFAULT_MATERIALS);
-  const [tasks, setTasks] = useState<StudyTaskItem[]>(DEFAULT_TASKS);
-  const [creations, setCreations] = useState<CreationItem[]>(DEFAULT_CREATIONS);
-  const [customFlashcards, setCustomFlashcards] = useState<
-    { id: string; title: string; definition: string; trap: string }[]
-  >([]);
-  const [latestMockSummary, setLatestMockSummary] = useState<CBTMockSummary | null>(null);
-  const [streakDays, setStreakDays] = useState(14);
-  const [xp, setXp] = useState(420);
-  const [level, setLevel] = useState(5);
-
-  // Google Workspace Confirmation Modal State
-  const [workspaceConfirm, setWorkspaceConfirm] = useState<{
-    isOpen: boolean;
-    title: string;
-    description: string;
-    confirmLabel: string;
-    action: () => Promise<void>;
-  } | null>(null);
-
+  // Sync global .dark class on <html>
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
 
-  // Global Ctrl+K shortcut for search
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setSearchModalOpen((v) => !v);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((prev) => (prev === msg ? null : prev));
+    }, 3600);
+  };
 
-  // Pomodoro Timer interval
+  const handleOpenLegal = (tab: LegalModalTabId = 'privacy') => {
+    setLegalModalState({ isOpen: true, tab });
+  };
+
+  const handleRecordMistake = (
+    question: CBTQuestion,
+    userAnswer: string,
+    source: 'CBT Mock' | 'PYQ Bank' | 'Adaptive Drill' = 'PYQ Bank'
+  ) => {
+    setMistakesNotebook((prev) => {
+      if (prev.some((m) => m.question.id === question.id)) return prev;
+      const entry: MistakeNotebookEntry = {
+        id: `mistake-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        question,
+        userAnswer,
+        loggedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        source,
+      };
+      const next = [entry, ...prev];
+      try {
+        localStorage.setItem('learnmate_mistakes_notebook', JSON.stringify(next));
+      } catch {
+        // ignore storage quota
+      }
+      return next;
+    });
+  };
+
+  // Pomodoro countdown effect
   useEffect(() => {
     if (!focusRunning) return;
-    const timer = setInterval(() => {
-      setFocusSeconds((s) => (s > 0 ? s - 1 : 0));
+    const interval = setInterval(() => {
+      setFocusSecondsLeft((prev) => {
+        if (prev <= 1) {
+          setFocusRunning(false);
+          showToast('25-minute Pomodoro Focus Session completed! +50 XP');
+          setXp((x) => x + 50);
+          return 25 * 60;
+        }
+        return prev - 1;
+      });
     }, 1000);
-    return () => clearInterval(timer);
+    return () => clearInterval(interval);
   }, [focusRunning]);
 
-  // Firebase Auth listener & Firestore real-time subscriptions
+  // Global Cmd+K / Ctrl+K shortcut for Search
   useEffect(() => {
-    const unsubAuth = initAuth(
-      async (user) => {
-        setCurrentUser(user);
-        setAuthStage('workspace');
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        if (currentUser) setSearchModalOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentUser]);
 
-        // Ensure user profile doc exists in Firestore
+  // Listen to Firebase Auth state & sync Firestore user profile
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const isAutoStart = params.get('autostart') === '1';
+
+    if (isAutoStart) {
+      setCurrentUser({
+        uid: 'local_autostart_student',
+        displayName: 'JEE Aspirant',
+        email: 'aspirant@learnmate.jee',
+      } as FirebaseUser);
+      setAuthLoading(false);
+    }
+
+    const fallbackTimer = setTimeout(() => {
+      setAuthLoading(false);
+    }, 1500);
+
+    const unsubscribe = initAuth(
+      async (user) => {
+        clearTimeout(fallbackTimer);
+        setCurrentUser(user);
+        setAuthLoading(false);
+
+        const localRaw = localStorage.getItem(`learnmate_profile_${user.uid}`);
+        let localParsed: Partial<StudentProfileData> = {};
+        if (localRaw) {
+          try {
+            localParsed = JSON.parse(localRaw);
+          } catch {
+            // ignore malformed JSON
+          }
+        }
+
+        if (user.uid.startsWith('local_')) {
+          setStudentProfile((prev) => ({
+            ...prev,
+            ...localParsed,
+            displayName:
+              localParsed.displayName ||
+              user.displayName ||
+              user.email?.split('@')[0] ||
+              'JEE Aspirant',
+            email: user.email || '',
+          }));
+          return;
+        }
+
         const userRef = doc(db, 'users', user.uid);
         try {
           const snap = await getDoc(userRef);
           if (!snap.exists()) {
+            const now = new Date().toISOString();
+            const defaultName =
+              user.displayName || user.email?.split('@')[0] || 'JEE Aspirant';
             await setDoc(userRef, {
-              uid: user.uid,
-              displayName: user.displayName || user.email?.split('@')[0] || 'Scholar',
-              email: user.email || '',
+              userId: user.uid,
+              displayName: defaultName,
               targetExam: 'JEE Main 2027',
-              streakDays: 14,
-              xp: 420,
-              level: 5,
-              focusSessionsCount: 23,
-              focusHoursTotal: 9.5,
               preferredLanguage: 'English',
-              theme: 'light',
-              createdAt: new Date().toISOString(),
+              streakDays: 0,
+              xp: 0,
+              level: 1,
+              focusMinutes: 0,
+              physicsMastery: 0,
+              chemistryMastery: 0,
+              mathsMastery: 0,
+              createdAt: now,
+              updatedAt: now,
             });
+            setStudentProfile((prev) => ({
+              ...prev,
+              ...localParsed,
+              displayName: localParsed.displayName || defaultName,
+              email: user.email || '',
+            }));
           } else {
             const data = snap.data();
-            if (typeof data.streakDays === 'number') setStreakDays(data.streakDays);
+            setStudentProfile((prev) => ({
+              ...prev,
+              ...localParsed,
+              displayName:
+                localParsed.displayName ||
+                data.displayName ||
+                user.displayName ||
+                user.email?.split('@')[0] ||
+                'JEE Aspirant',
+              email: user.email || '',
+              targetExam:
+                (localParsed.targetExam as StudentProfileData['targetExam']) ||
+                data.targetExam ||
+                'JEE Main 2027',
+              preferredLanguage:
+                (localParsed.preferredLanguage as StudentProfileData['preferredLanguage']) ||
+                data.preferredLanguage ||
+                'English',
+            }));
             if (typeof data.xp === 'number') setXp(data.xp);
             if (typeof data.level === 'number') setLevel(data.level);
+            if (typeof data.streakDays === 'number') setStreakDays(data.streakDays);
           }
         } catch (err) {
-          handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+          try {
+            handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
+          } catch {
+            // Non-blocking fallback
+          }
         }
       },
       () => {
-        setCurrentUser(null);
-        if (!isAutoStart) {
-          setAuthStage('landing');
+        clearTimeout(fallbackTimer);
+        if (isAutoStart) {
+          const autoUser = {
+            uid: 'local_autostart_student',
+            displayName: 'JEE Aspirant',
+            email: 'aspirant@learnmate.jee',
+          } as FirebaseUser;
+          setCurrentUser(autoUser);
+        } else {
+          setCurrentUser(null);
         }
+        setAuthLoading(false);
       }
-    );
-    return () => unsubAuth();
-  }, [isAutoStart]);
-
-  // Subscribe to user's private collections when signed in
-  useEffect(() => {
-    if (!currentUser) return;
-    const uid = currentUser.uid;
-
-    const unsubMaterials = onSnapshot(
-      query(collection(db, 'materials'), where('userId', '==', uid)),
-      (snap) => {
-        if (!snap.empty) {
-          const list: MaterialItem[] = snap.docs.map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              title: data.title,
-              subject: data.subject,
-              chapter: data.chapter || data.title,
-              sourceType: data.sourceType,
-              sourceRef: data.sourceRef,
-              pageCount: data.pageCount || 13,
-              currentPage: data.currentPage || 1,
-              progressPct: data.progressPct || 0,
-              contentSummary: data.contentSummary || '',
-            };
-          });
-          setMaterials([...DEFAULT_MATERIALS, ...list]);
-        }
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'materials')
-    );
-
-    const unsubTasks = onSnapshot(
-      query(collection(db, 'tasks'), where('userId', '==', uid)),
-      (snap) => {
-        if (!snap.empty) {
-          const list: StudyTaskItem[] = snap.docs.map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              title: data.title,
-              durationMin: data.durationMin || 20,
-              completed: Boolean(data.completed),
-              dueDate: data.dueDate || '2026-11-12',
-            };
-          });
-          setTasks([...DEFAULT_TASKS, ...list]);
-        }
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'tasks')
-    );
-
-    const unsubCreations = onSnapshot(
-      query(collection(db, 'creations'), where('userId', '==', uid)),
-      (snap) => {
-        if (!snap.empty) {
-          const list: CreationItem[] = snap.docs.map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              type: data.type,
-              title: data.title,
-              prompt: data.prompt,
-              subject: data.subject || 'Physics',
-              preset: data.preset,
-              assetData: data.assetData,
-              resolutionOrRatio: data.resolutionOrRatio,
-            };
-          });
-          setCreations([...DEFAULT_CREATIONS, ...list]);
-        }
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'creations')
     );
 
     return () => {
-      unsubMaterials();
-      unsubTasks();
-      unsubCreations();
+      clearTimeout(fallbackTimer);
+      unsubscribe();
     };
+  }, []);
+
+  // Real-time listener for user's uploaded study materials in Firestore (Strictly user-uploaded only)
+  useEffect(() => {
+    if (!currentUser || currentUser.uid.startsWith('local_')) return;
+    const materialsRef = collection(db, 'users', currentUser.uid, 'materials');
+    const q = query(materialsRef, orderBy('createdAt', 'desc'));
+
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const loaded: MaterialItem[] = snapshot.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              title: data.title || 'Untitled Material',
+              subject: (data.subject as MaterialItem['subject']) || 'Physics',
+              chapter: data.chapter || 'General',
+              sourceType: (data.sourceType as MaterialItem['sourceType']) || 'pdf',
+              sourceRef: data.sourceRef || '',
+              pageCount: data.pageCount || 3,
+              currentPage: data.currentPage || 1,
+              progressPct: data.progressPct || 15,
+              contentSummary: data.contentSummary || '',
+              addedLabel: 'Uploaded',
+            };
+          });
+          setMaterials(loaded);
+          setMaterialBundles((prev) => {
+            const next = { ...prev };
+            loaded.forEach((m) => {
+              if (!next[m.id]) {
+                next[m.id] = generateMaterialStudyBundle({
+                  materialId: m.id,
+                  title: m.title,
+                  subject: m.subject,
+                  chapter: m.chapter,
+                  sourceType: m.sourceType,
+                  rawText: m.contentSummary,
+                });
+              }
+            });
+            return next;
+          });
+          setSelectedMaterial((cur) => cur || loaded[0] || null);
+        } else {
+          setMaterials([]);
+          setSelectedMaterial(null);
+        }
+      },
+      (err) => {
+        try {
+          handleFirestoreError(
+            err,
+            OperationType.LIST,
+            `users/${currentUser.uid}/materials`
+          );
+        } catch {
+          // Ignore snapshot error if offline
+        }
+      }
+    );
+
+    return () => unsub();
   }, [currentUser]);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+  // Save updated Student Profile
+  const handleSaveStudentProfile = async (updated: StudentProfileData) => {
+    setStudentProfile(updated);
+    if (!currentUser) return;
+
+    localStorage.setItem(
+      `learnmate_profile_${currentUser.uid}`,
+      JSON.stringify(updated)
+    );
+
+    if (!currentUser.uid.startsWith('local_')) {
+      const userRef = doc(db, 'users', currentUser.uid);
+      try {
+        await setDoc(
+          userRef,
+          {
+            userId: currentUser.uid,
+            displayName: updated.displayName.slice(0, 90),
+            targetExam: updated.targetExam,
+            preferredLanguage: updated.preferredLanguage,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch {
+        // Local storage already updated
+      }
+    }
+    showToast('Student profile & JEE target preferences saved!');
   };
 
-  const handleAddMaterial = async (item: {
+  // Export User Data JSON (GDPR / India DPDP Data Portability)
+  const handleExportAccountData = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      platform: 'LearnMate JEE',
+      profile: studentProfile,
+      materialsCount: materials.length,
+      materials,
+      tasks,
+      creations,
+      mistakesNotebook,
+      lastMockScore,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `LearnMate_JEE_Data_Export_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Downloaded your complete LearnMate JEE account data JSON.');
+  };
+
+  // Add New Material Handler — Generates Full MaterialStudyBundle (KaTeX Notes, Mind Map, Flashcards, Sticky Notes, Quiz)
+  const handleAddMaterial = async (newMat: {
     title: string;
     subject: 'Physics' | 'Chemistry' | 'Mathematics';
     chapter: string;
@@ -346,434 +477,505 @@ export default function App() {
     sourceRef: string;
     contentSummary: string;
   }) => {
+    const newId = `mat-${Date.now()}`;
+    const bundle = generateMaterialStudyBundle({
+      materialId: newId,
+      title: newMat.title,
+      subject: newMat.subject,
+      chapter: newMat.chapter,
+      sourceType: newMat.sourceType,
+      rawText: newMat.contentSummary,
+    });
+
     const localItem: MaterialItem = {
-      id: `mat-${Date.now()}`,
-      title: item.title,
-      subject: item.subject,
-      chapter: item.chapter,
-      sourceType: item.sourceType,
-      sourceRef: item.sourceRef,
-      pageCount: 15,
+      id: newId,
+      title: newMat.title,
+      subject: newMat.subject,
+      chapter: newMat.chapter,
+      sourceType: newMat.sourceType,
+      sourceRef: newMat.sourceRef,
+      pageCount: bundle.pages.length,
       currentPage: 1,
-      progressPct: 10,
-      contentSummary: item.contentSummary,
+      progressPct: 15,
+      contentSummary: newMat.contentSummary,
       addedLabel: 'Just now',
     };
+
+    setMaterialBundles((prev) => ({
+      ...prev,
+      [newId]: bundle,
+    }));
     setMaterials((prev) => [localItem, ...prev]);
-    showToast(`Added "${item.title}" to My Materials!`);
-
-    if (currentUser) {
-      try {
-        await addDoc(collection(db, 'materials'), {
-          userId: currentUser.uid,
-          title: item.title,
-          subject: item.subject,
-          chapter: item.chapter,
-          sourceType: item.sourceType,
-          sourceRef: item.sourceRef,
-          pageCount: 15,
-          currentPage: 1,
-          progressPct: 10,
-          contentSummary: item.contentSummary.slice(0, 9000),
-          createdAt: new Date().toISOString(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, 'materials');
-      }
-    }
-  };
-
-  const handleAddTask = async (title: string, durationMin: number) => {
-    const newTask: StudyTaskItem = {
-      id: `task-${Date.now()}`,
-      title,
-      durationMin,
-      completed: false,
-      dueDate: '2026-11-12',
-    };
-    setTasks((prev) => [...prev, newTask]);
-
-    if (currentUser) {
-      try {
-        await addDoc(collection(db, 'tasks'), {
-          userId: currentUser.uid,
-          title,
-          durationMin,
-          completed: false,
-          dueDate: '2026-11-12',
-          createdAt: new Date().toISOString(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, 'tasks');
-      }
-    }
-  };
-
-  const handleToggleTask = async (taskId: string) => {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t))
+    setSelectedMaterial(localItem);
+    setStudySubTab('Chapter Notes');
+    setActiveTab('Study');
+    setXp((x) => x + 25);
+    if (streakDays === 0) setStreakDays(1);
+    showToast(
+      `Extracted "${newMat.title}" into KaTeX Notes, Multi-Level Mind Map, Handwritten Notebook & Quiz!`
     );
-    if (currentUser && !taskId.startsWith('task-')) {
-      const target = tasks.find((t) => t.id === taskId);
-      if (target) {
-        try {
-          await updateDoc(doc(db, 'tasks', taskId), {
-            completed: !target.completed,
-          });
-        } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `tasks/${taskId}`);
-        }
+
+    if (currentUser && !currentUser.uid.startsWith('local_')) {
+      const matRef = doc(db, 'users', currentUser.uid, 'materials', newId);
+      try {
+        await setDoc(matRef, {
+          userId: currentUser.uid,
+          title: newMat.title.slice(0, 190),
+          subject: newMat.subject,
+          chapter: newMat.chapter.slice(0, 95),
+          sourceType: newMat.sourceType,
+          sourceRef: (newMat.sourceRef || '').slice(0, 500),
+          pageCount: bundle.pages.length,
+          currentPage: 1,
+          progressPct: 15,
+          contentSummary: (newMat.contentSummary || '').slice(0, 3900),
+          createdAt: new Date().toISOString(),
+        });
+      } catch {
+        // Local state already updated
       }
     }
+  };
+
+  const handleUpdateMaterialPage = (
+    materialId: string,
+    pageNumber: number,
+    updatedPage: NotePageData
+  ) => {
+    setMaterialBundles((prev) => {
+      const existing = prev[materialId];
+      if (!existing) return prev;
+      return {
+        ...prev,
+        [materialId]: {
+          ...existing,
+          pages: existing.pages.map((p) => (p.pageNumber === pageNumber ? updatedPage : p)),
+        },
+      };
+    });
+    showToast(`Saved annotated Page ${pageNumber} back to your library!`);
+  };
+
+  const handleDeleteMaterial = (matId: string) => {
+    setMaterials((prev) => {
+      const remaining = prev.filter((m) => m.id !== matId);
+      if (selectedMaterial?.id === matId) {
+        setSelectedMaterial(remaining[0] || null);
+      }
+      return remaining;
+    });
+    showToast('Removed study material from library.');
   };
 
   const handleSaveCreation = async (creation: Omit<CreationItem, 'id'>) => {
-    const newItem: CreationItem = {
+    const item: CreationItem = {
       ...creation,
-      id: `creat-${Date.now()}`,
+      id: `cr-${Date.now()}`,
     };
-    setCreations((prev) => [newItem, ...prev]);
-
-    if (currentUser) {
-      try {
-        await addDoc(collection(db, 'creations'), {
-          userId: currentUser.uid,
-          ...creation,
-          assetData: creation.assetData.slice(0, 9000),
-          createdAt: new Date().toISOString(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, 'creations');
-      }
-    }
+    setCreations((prev) => [item, ...prev]);
+    showToast(`Saved "${creation.title}" to your Create Library!`);
   };
 
+  // Add Flashcard Handler (from Revise Mind Map)
   const handleAddFlashcard = async (node: MindMapNodeItem) => {
-    setCustomFlashcards((prev) => [
-      ...prev,
-      {
-        id: node.id,
-        title: node.title,
-        definition: node.definition,
-        trap: node.commonTrap,
-      },
-    ]);
-
-    if (currentUser) {
+    showToast(`Added "${node.title}" to Spaced-Repetition Flashcards!`);
+    if (currentUser && !currentUser.uid.startsWith('local_')) {
+      const cardId = `card_${node.id}_${Date.now()}`;
+      const cardRef = doc(db, 'users', currentUser.uid, 'flashcards', cardId);
       try {
-        await addDoc(collection(db, 'revisions'), {
+        await setDoc(cardRef, {
           userId: currentUser.uid,
-          chapter: 'd & f Block',
-          format: 'flashcard',
-          nodeTitle: node.title,
+          chapter: selectedMaterial?.chapter || 'General',
+          title: node.title,
           definition: node.definition,
           example: node.example,
           commonTrap: node.commonTrap,
           pageRef: node.pageRef,
+          easeFactor: 2.5,
+          intervalDays: 1,
           createdAt: new Date().toISOString(),
         });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, 'revisions');
+      } catch {
+        // Non-blocking
       }
     }
   };
 
-  const handleSubmitCBTMock = async (summary: CBTMockSummary, focusEvents: number) => {
-    setLatestMockSummary(summary);
-    setActiveNav('Progress');
+  // Submit Full-Screen CBT Mock Test Handler
+  const handleSubmitCBTMock = async (
+    summary: CBTMockSummary,
+    focusEvents: number
+  ) => {
+    const scaledScore = Math.max(
+      0,
+      Math.min(300, Math.round((summary.totalScore / Math.max(1, summary.maxScore)) * 300))
+    );
+    setLastMockScore(scaledScore);
+    setInCBTMockMode(false);
+    setActiveTab('Progress');
+    setXp((x) => x + 100);
     showToast(
-      `Submitted JEE Main Mock! Score: ${summary.totalScore} / ${summary.maxScore} (${summary.accuracyPct}% accuracy)`
+      `CBT Submitted! Score: ${summary.totalScore}/${summary.maxScore} (Scaled: ${scaledScore}/300)`
     );
 
-    if (currentUser) {
+    if (currentUser && !currentUser.uid.startsWith('local_')) {
+      const attemptId = `mock_${Date.now()}`;
+      const attemptRef = doc(db, 'users', currentUser.uid, 'mockAttempts', attemptId);
       try {
-        await addDoc(collection(db, 'mockAttempts'), {
+        await setDoc(attemptRef, {
           userId: currentUser.uid,
-          mockTitle: 'JEE Main • Practice Mock',
-          examType: 'Main',
-          score: summary.totalScore,
-          maxMarks: summary.maxScore,
+          paperTitle: `${cbtExamMode} • Official CBT Mock`,
+          examType: cbtExamMode,
+          score: scaledScore,
+          maxScore: 300,
           accuracy: summary.accuracyPct,
-          timeTakenMinutes: 38,
-          correctCount: summary.correctCount,
-          incorrectCount: summary.incorrectCount,
-          skippedCount: summary.unansweredCount,
           focusEvents,
-          responsesJson: JSON.stringify(summary.paletteCounts),
-          createdAt: new Date().toISOString(),
+          timeSpentSeconds: 1800,
+          responsesJson: JSON.stringify(summary),
+          completedAt: new Date().toISOString(),
         });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, 'mockAttempts');
+      } catch {
+        // Non-blocking
       }
     }
   };
 
-  // Render Landing or Auth Screen when not in Workspace
-  if (authStage === 'landing') {
+  // Loading state
+  if (authLoading) {
     return (
-      <LandingPage
-        onOpenAuth={(mode) => {
-          setAuthMode(mode);
-          setAuthStage('auth');
-        }}
-      />
+      <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-11 h-11 rounded-2xl bg-indigo-600 flex items-center justify-center text-white shadow-md animate-pulse">
+            <GraduationCap className="w-6 h-6" />
+          </div>
+          <div className="text-sm font-bold text-slate-600">
+            Loading LearnMate JEE...
+          </div>
+        </div>
+      </div>
     );
   }
 
-  if (authStage === 'auth') {
+  // Unauthenticated Routing: Strict Landing Page -> Auth Screen
+  if (!currentUser) {
     return (
-      <AuthScreen
-        initialMode={authMode}
-        onBackToLanding={() => setAuthStage('landing')}
-        onAuthComplete={() => setAuthStage('workspace')}
-      />
+      <>
+        {unauthScreen === 'landing' ? (
+          <LandingPage
+            onOpenAuth={(mode) => {
+              setAuthInitialMode(mode);
+              setUnauthScreen('auth');
+            }}
+            onOpenLegal={handleOpenLegal}
+          />
+        ) : (
+          <AuthScreen
+            initialMode={authInitialMode}
+            onBackToLanding={() => setUnauthScreen('landing')}
+            onAuthComplete={() => setActiveTab('Home')}
+            onOpenLegal={handleOpenLegal}
+          />
+        )}
+        <LegalComplianceModal
+          isOpen={legalModalState.isOpen}
+          initialTab={legalModalState.tab}
+          onClose={() => setLegalModalState((prev) => ({ ...prev, isOpen: false }))}
+        />
+      </>
     );
   }
 
-  // Full-Screen NTA CBT Practice Mock Mode (Screen 1)
-  if (activeNav === 'CBT_MOCK') {
+  // Full-Screen NTA CBT Practice Mock Mode
+  if (inCBTMockMode) {
     return (
       <CBTMockExamView
-        candidateName={
-          currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Candidate'
-        }
+        candidateName={studentProfile.displayName || 'Candidate'}
+        initialExamMode={cbtExamMode}
         onSubmitMock={handleSubmitCBTMock}
-        onExitMock={() => setActiveNav('Practice')}
+        onExitMock={() => setInCBTMockMode(false)}
+        onRecordMistake={(q, ans) => handleRecordMistake(q, ans, 'CBT Mock')}
       />
     );
   }
 
-  const displayUserName =
-    currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Aniket';
-  const avatarInitial = displayUserName.charAt(0).toUpperCase();
-  const focusMins = String(Math.floor(focusSeconds / 60)).padStart(2, '0');
-  const focusSecs = String(focusSeconds % 60).padStart(2, '0');
+  const userInitial = (
+    studentProfile.displayName?.[0] ||
+    currentUser.email?.[0] ||
+    'A'
+  ).toUpperCase();
+
+  const focusClockLabel = `${String(Math.floor(focusSecondsLeft / 60)).padStart(2, '0')}:${String(
+    focusSecondsLeft % 60
+  ).padStart(2, '0')}`;
+
+  const activeBundle = selectedMaterial ? materialBundles[selectedMaterial.id] || null : null;
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F19] text-[#0F172A] dark:text-[#F8FAFC] flex flex-col">
-      {/* Global Top Navigation Bar matching all authenticated LearnMate JEE screenshots */}
-      <header className="sticky top-0 z-30 h-16 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 flex items-center justify-between gap-3">
-        {/* Left Brand + Primary 5 Nav Items */}
+    <div
+      className={`min-h-screen transition-colors ${
+        darkMode ? 'bg-slate-950 text-slate-100' : 'bg-[#F8FAFC] text-slate-900'
+      }`}
+    >
+      {/* ===================================================================== */}
+      {/* UNIFIED STICKY TOP NAVIGATION HEADER                                  */}
+      {/* ===================================================================== */}
+      <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 px-4 lg:px-6 h-16 flex items-center justify-between gap-3">
+        {/* Left: Brand Logo + Primary 5 Tabs */}
         <div className="flex items-center gap-6">
           <button
-            type="button"
-            onClick={() => setActiveNav('Home')}
-            className="flex items-center gap-2 cursor-pointer"
+            onClick={() => setActiveTab('Home')}
+            className="flex items-center gap-2.5 text-left cursor-pointer group"
           >
-            <div className="w-8 h-8 rounded-xl bg-[#4F46E5] flex items-center justify-center text-white shadow-2xs">
-              <BookOpen className="w-4 h-4" />
+            <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-base shadow-xs group-hover:bg-indigo-700 transition-colors">
+              <GraduationCap className="w-5 h-5" />
             </div>
-            <span className="font-display font-extrabold text-lg tracking-tight text-slate-900 dark:text-white">
-              LearnMate
-            </span>
-            <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[#EEF2FF] text-[#4F46E5]">
-              JEE
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="font-extrabold text-lg tracking-tight text-slate-900 dark:text-white">
+                LearnMate
+              </span>
+              <span className="px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider bg-indigo-50 text-indigo-600 rounded-md border border-indigo-200/70">
+                JEE
+              </span>
+            </div>
           </button>
 
+          {/* 5 Primary Tabs */}
           <nav className="hidden md:flex items-center gap-1">
             {(
               [
                 { id: 'Home', icon: Home },
-                { id: 'Study', icon: BookMarked },
+                { id: 'Study', icon: BookOpen },
                 { id: 'Practice', icon: Target },
-                { id: 'Revise', icon: ListChecks },
+                { id: 'Revise', icon: Layers },
                 { id: 'Progress', icon: BarChart3 },
               ] as const
-            ).map((item) => {
-              const Icon = item.icon;
-              const active = activeNav === item.id;
+            ).map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
               return (
                 <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveNav(item.id)}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-[#EEF2FF] text-[#4F46E5]'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-indigo-50/90 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800 shadow-2xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 hover:bg-slate-100/70 dark:hover:bg-slate-800'
                   }`}
                 >
                   <Icon className="w-4 h-4" />
-                  <span>{item.id}</span>
+                  {tab.id}
                 </button>
               );
             })}
           </nav>
         </div>
 
-        {/* Right Action Controls matching screenshots */}
+        {/* Right: Global Actions & Utilities */}
         <div className="flex items-center gap-2">
+          <div className="hidden lg:block h-5 w-px bg-slate-200 dark:bg-slate-800 mx-1" />
+
+          {/* + Add Material */}
           <button
-            type="button"
             onClick={() => {
               setAddMaterialInitialTab('youtube');
               setAddMaterialOpen(true);
             }}
-            className="px-3.5 py-2 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-xs transition-all cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Add Material</span>
+            <Plus className="w-4 h-4" />
+            <span>Add Material</span>
           </button>
 
+          {/* Search */}
           <button
-            type="button"
             onClick={() => setSearchModalOpen(true)}
-            aria-label="Search workspace"
-            className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-xs font-bold text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
+            title="Global Search (Cmd+K)"
           >
-            <Search className="w-3.5 h-3.5" />
-            <span className="hidden xl:inline">Search (Ctrl+K)</span>
+            <Search className="w-3.5 h-3.5 text-slate-500" />
+            <span className="hidden xl:inline">Search</span>
           </button>
 
+          {/* Study Tools */}
           <button
-            type="button"
             onClick={() => setStudyToolsOpen(true)}
-            className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-xs font-bold text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
           >
-            <Grid className="w-3.5 h-3.5 text-[#4F46E5]" />
-            <span className="hidden lg:inline">Study Tools</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setFocusModalOpen(true)}
-            className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 font-mono tabular-nums cursor-pointer"
-          >
-            <Clock className="w-3.5 h-3.5 text-[#4F46E5]" />
-            <span>
-              {focusMins}:{focusSecs}
+            <Grid className="w-3.5 h-3.5 text-indigo-600" />
+            <span className="hidden sm:inline leading-tight text-left">
+              Study Tools
             </span>
           </button>
 
+          {/* Focus 25:00 */}
           <button
-            type="button"
-            onClick={() => setDarkMode((d) => !d)}
-            aria-label="Toggle color theme"
-            className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+            onClick={() => setFocusTimerOpen((prev) => !prev)}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-extrabold transition-all cursor-pointer ${
+              focusTimerOpen || focusRunning
+                ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
+                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-slate-800 dark:text-slate-200'
+            }`}
           >
-            {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            <Clock className="w-3.5 h-3.5 text-indigo-600" />
+            <span>{focusClockLabel}</span>
           </button>
 
+          {/* Theme Toggle */}
           <button
-            type="button"
-            onClick={() => showToast('2 revision reminders: 12 flashcards due in d & f Block.')}
-            aria-label="Notifications"
-            className="relative p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
-          >
-            <Bell className="w-4 h-4" />
-            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
-              2
-            </span>
-          </button>
-
-          <button
-            type="button"
             onClick={() => {
-              setStudyInitialSubTab('Resources');
-              setActiveNav('Study');
+              setDarkMode(!darkMode);
+              showToast(darkMode ? 'Switched to High-Craft Light Mode' : 'Dark Mode Active');
             }}
-            aria-label="Help and Exam Guide"
-            className="hidden sm:inline-flex items-center gap-1 px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 cursor-pointer"
+            className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-slate-600 dark:text-slate-300 transition-all cursor-pointer"
+            title="Toggle Theme"
           >
-            <HelpCircle className="w-3.5 h-3.5" />
+            {darkMode ? <Sun className="w-4 h-4 text-amber-500" /> : <Moon className="w-4 h-4" />}
           </button>
 
-          <div className="flex items-center gap-1.5">
-            <div
-              title={`Signed in as ${displayUserName}`}
-              className="w-8 h-8 rounded-full bg-[#4F46E5] text-white font-display font-bold text-xs flex items-center justify-center shadow-2xs"
-            >
-              {avatarInitial}
-            </div>
+          {/* Notifications Bell with Dropdown */}
+          <div className="relative">
             <button
-              type="button"
-              onClick={async () => {
-                await logoutUser();
-                setAuthStage('landing');
-              }}
-              title="Sign out"
-              aria-label="Sign out"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 cursor-pointer"
+              onClick={() => setNotificationsOpen((prev) => !prev)}
+              className="relative p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-slate-600 dark:text-slate-300 transition-all cursor-pointer"
+              title="Notifications"
             >
-              <LogOut className="w-4 h-4" />
+              <Bell className="w-4 h-4" />
+              {materials.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] font-extrabold flex items-center justify-center">
+                  {materials.length}
+                </span>
+              )}
             </button>
+
+            {notificationsOpen && (
+              <div className="absolute right-0 mt-2 w-80 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl p-4 z-50 text-slate-900 dark:text-white">
+                <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100 dark:border-slate-800">
+                  <span className="text-xs font-extrabold">
+                    Study Alerts &amp; Workspace Status
+                  </span>
+                  <button
+                    onClick={() => setNotificationsOpen(false)}
+                    className="text-[11px] font-bold text-indigo-600 hover:underline cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="space-y-2.5 text-xs">
+                  {materials.length === 0 ? (
+                    <div
+                      onClick={() => {
+                        setNotificationsOpen(false);
+                        setAddMaterialOpen(true);
+                      }}
+                      className="p-2.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/50 border border-indigo-100 dark:border-indigo-800 cursor-pointer"
+                    >
+                      <div className="font-extrabold text-indigo-950 dark:text-indigo-200">
+                        Upload Your First Study Material
+                      </div>
+                      <div className="text-slate-600 dark:text-slate-400 mt-0.5">
+                        Add a PDF, handwritten photo, or 12-hour YouTube marathon to unlock AI notes &amp; mind maps.
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => {
+                        setNotificationsOpen(false);
+                        setActiveTab('Revise');
+                      }}
+                      className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-100 cursor-pointer"
+                    >
+                      <div className="font-extrabold text-indigo-950">
+                        {materials.length} Uploaded Material(s) Ready for Revision
+                      </div>
+                      <div className="text-slate-600 mt-0.5">
+                        Review your KaTeX mind maps, handwritten sheets, and 3D flashcards.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* Help / Live AI Voice Tutor */}
+          <button
+            onClick={() => setVoiceTutorOpen(true)}
+            className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-xs font-bold text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
+            title="Open Live Voice JEE Tutor"
+          >
+            <HelpCircle className="w-4 h-4 text-indigo-600" />
+            <span className="hidden xl:inline">Voice Tutor</span>
+          </button>
+
+          {/* Interactive Student Profile Avatar Button */}
+          <button
+            onClick={() => setProfileModalOpen(true)}
+            style={{ backgroundColor: studentProfile.avatarColor || '#4F46E5' }}
+            className="w-9 h-9 rounded-full text-white font-extrabold text-xs flex items-center justify-center shadow-xs transition-all cursor-pointer ring-2 ring-indigo-100 hover:opacity-90"
+            title="Open Student Profile & Account Settings"
+          >
+            {userInitial}
+          </button>
         </div>
       </header>
 
-      {/* Mobile Navigation Bar */}
-      <div className="md:hidden flex items-center justify-around bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 py-2 px-2 text-xs">
-        {(['Home', 'Study', 'Practice', 'Revise', 'Progress'] as const).map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            onClick={() => setActiveNav(tab)}
-            className={`px-3 py-1.5 rounded-lg font-semibold ${
-              activeNav === tab ? 'bg-[#EEF2FF] text-[#4F46E5]' : 'text-slate-600'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      {/* Toast Notification Banner */}
-      {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 px-4 py-3 rounded-xl bg-slate-900 text-white text-xs font-semibold shadow-xl flex items-center gap-3">
-          <span>{toastMessage}</span>
-          <button
-            type="button"
-            onClick={() => setToastMessage(null)}
-            className="text-slate-400 hover:text-white cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
-      {/* Main View Router */}
-      <main className="flex-1">
-        {activeNav === 'Home' && (
+      {/* ===================================================================== */}
+      {/* ACTIVE VIEW ROUTER                                                    */}
+      {/* ===================================================================== */}
+      <main className="pb-16">
+        {activeTab === 'Home' && (
           <HomeDashboardView
-            userName={displayUserName}
+            userName={studentProfile.displayName}
+            targetExam={studentProfile.targetExam}
+            onChangeTargetExam={(exam) => {
+              handleSaveStudentProfile({ ...studentProfile, targetExam: exam });
+            }}
             materials={materials}
             tasks={tasks}
             streakDays={streakDays}
             xp={xp}
             level={level}
-            onToggleTask={handleToggleTask}
-            onAddTask={handleAddTask}
-            onSyncWorkspaceTasks={() => {
-              setWorkspaceConfirm({
-                isOpen: true,
-                title: 'Sync Study Schedule with Google Calendar & Tasks',
-                description:
-                  'This will create a study block in your primary Google Calendar and sync your active LearnMate JEE tasks to your Google Tasks list.',
-                confirmLabel: 'Confirm & Sync',
-                action: async () => {
-                  try {
-                    const res = await syncStudyTasksWithCalendarAndTasks(
-                      tasks.map((t) => ({ title: t.title, durationMin: t.durationMin }))
-                    );
-                    showToast(
-                      `Synced ${res.tasksCreated} tasks to Google Tasks & Calendar!`
-                    );
-                  } catch (err: any) {
-                    showToast(err?.message || 'Sign in with Google to sync Calendar & Tasks.');
-                  } finally {
-                    setWorkspaceConfirm(null);
-                  }
+            lastMockScore={lastMockScore}
+            onToggleTask={(taskId) => {
+              setTasks((prev) =>
+                prev.map((t) =>
+                  t.id === taskId ? { ...t, completed: !t.completed } : t
+                )
+              );
+            }}
+            onAddTask={(title, durationMin) => {
+              setTasks((prev) => [
+                {
+                  id: `task-${Date.now()}`,
+                  title,
+                  durationMin,
+                  completed: false,
+                  dueDate: 'Today',
                 },
-              });
+                ...prev,
+              ]);
+              showToast('Added new study task!');
             }}
-            onOpenStudyWorkbench={() => {
-              setStudyInitialSubTab('Chapter Notes');
-              setActiveNav('Study');
+            onDeleteTask={(taskId) => {
+              setTasks((prev) => prev.filter((t) => t.id !== taskId));
             }}
-            onOpenRevise={() => setActiveNav('Revise')}
-            onOpenPractice={() => setActiveNav('Practice')}
-            onOpenProgress={() => setActiveNav('Progress')}
+            onSyncWorkspaceTasks={() => setWorkspaceSyncConfirmOpen(true)}
+            onOpenStudyWorkbench={(mat) => {
+              if (mat) setSelectedMaterial(mat);
+              setStudySubTab('Chapter Notes');
+              setActiveTab('Study');
+            }}
+            onOpenMyMaterials={() => {
+              setStudySubTab('My Materials');
+              setActiveTab('Study');
+            }}
+            onOpenSyllabus={() => {
+              setStudySubTab('Syllabus');
+              setActiveTab('Study');
+            }}
+            onOpenRevise={() => setActiveTab('Revise')}
+            onOpenPractice={() => setActiveTab('Practice')}
+            onOpenProgress={() => setActiveTab('Progress')}
             onOpenAddMaterial={(tab) => {
               setAddMaterialInitialTab(tab);
               setAddMaterialOpen(true);
@@ -782,11 +984,24 @@ export default function App() {
           />
         )}
 
-        {activeNav === 'Study' && (
+        {activeTab === 'Study' && (
           <StudyWorkspaceView
-            initialSubTab={studyInitialSubTab}
+            initialSubTab={studySubTab}
+            selectedMaterial={selectedMaterial}
+            activeBundle={activeBundle}
             materials={materials}
             creations={creations}
+            onSelectMaterial={(mat) => {
+              setSelectedMaterial(mat);
+              setStudySubTab('Chapter Notes');
+              showToast(`Loaded "${mat.title}" in Study Workbench.`);
+            }}
+            onDeleteMaterial={handleDeleteMaterial}
+            onUpdateMaterialPage={handleUpdateMaterialPage}
+            onOpenAddMaterial={(tab) => {
+              setAddMaterialInitialTab(tab);
+              setAddMaterialOpen(true);
+            }}
             onSaveCreation={handleSaveCreation}
             onAddQuickSheetMaterial={async (title, subject, summary) => {
               await handleAddMaterial({
@@ -794,82 +1009,92 @@ export default function App() {
                 subject,
                 chapter: title,
                 sourceType: 'text',
-                sourceRef: 'Quick Sheet',
+                sourceRef: 'Quick Revision Sheet',
                 contentSummary: summary,
               });
             }}
             onOpenVoiceTutor={() => setVoiceTutorOpen(true)}
-            onStartPracticeQuiz={() => setActiveNav('Practice')}
+            onLaunchInstantPractice={(mode, title, chapterName, customQuestions) => {
+              setInstantPracticeConfig({
+                isOpen: true,
+                mode,
+                title,
+                chapterOrPaper: chapterName,
+                customQuestions,
+              });
+            }}
           />
         )}
 
-        {activeNav === 'Practice' && (
-          <PracticeDashboardView onStartCBTMock={() => setActiveNav('CBT_MOCK')} />
+        {activeTab === 'Practice' && (
+          <PracticeDashboardView
+            onStartCBTMock={(mode = 'JEE Main') => {
+              setCbtExamMode(mode);
+              setInCBTMockMode(true);
+            }}
+            onOpenInstantPractice={(paperTitle, customQuestions) =>
+              setInstantPracticeConfig({
+                isOpen: true,
+                mode: 'paper-solver',
+                title: 'Official Paper Practice',
+                chapterOrPaper: paperTitle,
+                customQuestions,
+              })
+            }
+            mistakesNotebook={mistakesNotebook}
+            onRecordMistake={(q, ans) => handleRecordMistake(q, ans, 'PYQ Bank')}
+          />
         )}
 
-        {activeNav === 'Revise' && (
+        {activeTab === 'Revise' && (
           <ReviseWorkspaceView
-            customCards={customFlashcards}
+            materials={materials}
+            selectedMaterial={selectedMaterial}
+            materialBundles={materialBundles}
+            mistakesNotebook={mistakesNotebook}
+            onSelectMaterial={(mat) => setSelectedMaterial(mat)}
+            onOpenAddMaterial={(tab) => {
+              setAddMaterialInitialTab(tab);
+              setAddMaterialOpen(true);
+            }}
             onAddFlashcard={handleAddFlashcard}
-            onExportToSlides={(chapterTitle, nodes) => {
-              setWorkspaceConfirm({
+            onPracticeQuestion={(q) =>
+              setInstantPracticeConfig({
                 isOpen: true,
-                title: 'Export Mind Map to Google Slides',
-                description: `Create a new Google Slides presentation for "${chapterTitle}" containing your revision mind map nodes and JEE trap warnings.`,
-                confirmLabel: 'Create Presentation',
-                action: async () => {
-                  try {
-                    const res = await exportMindMapToGoogleSlides(
-                      chapterTitle,
-                      nodes.map((n) => ({
-                        title: n.title,
-                        definition: n.definition,
-                        trap: n.commonTrap,
-                      }))
-                    );
-                    showToast(`Created Google Slides presentation (ID: ${res.presentationId})!`);
-                  } catch (err: any) {
-                    showToast(err?.message || 'Sign in with Google to export to Google Slides.');
-                  } finally {
-                    setWorkspaceConfirm(null);
-                  }
-                },
-              });
-            }}
-            onExportToKeep={(chapterTitle, nodes) => {
-              setWorkspaceConfirm({
-                isOpen: true,
-                title: 'Save Revision Summary to Google Keep / Drive',
-                description: `Save a quick-revision checklist note for "${chapterTitle}" to your Google Workspace account.`,
-                confirmLabel: 'Save Revision Note',
-                action: async () => {
-                  try {
-                    const res = await exportRevisionToGoogleKeepOrDrive(
-                      `${chapterTitle} – JEE Quick Revision`,
-                      nodes.map((n) => `${n.title}: ${n.definition} (Trap: ${n.commonTrap})`)
-                    );
-                    showToast(`Saved revision note to ${res.target}!`);
-                  } catch (err: any) {
-                    showToast(err?.message || 'Sign in with Google to export revision notes.');
-                  } finally {
-                    setWorkspaceConfirm(null);
-                  }
-                },
-              });
-            }}
+                mode: 'adaptive-drill',
+                title: 'Mistake DNA Remediation',
+                chapterOrPaper: q.chapter,
+                customQuestions: [q],
+              })
+            }
+            showToast={showToast}
           />
         )}
 
-        {activeNav === 'Progress' && (
+        {activeTab === 'Progress' && (
           <ProgressDashboardView
-            latestMockSummary={latestMockSummary}
-            onOpenRevise={() => setActiveNav('Revise')}
-            onOpenPractice={() => setActiveNav('Practice')}
+            onStartCBTMock={(mode = 'JEE Main') => {
+              setCbtExamMode(mode);
+              setInCBTMockMode(true);
+            }}
+            onPracticeWeakTopic={(topic) => {
+              setInstantPracticeConfig({
+                isOpen: true,
+                mode: 'adaptive-drill',
+                title: 'Weak-Chapter Remediation Drill',
+                chapterOrPaper: topic,
+              });
+            }}
+            lastMockScore={lastMockScore}
+            materialsCount={materials.length}
+            mistakesCount={mistakesNotebook.length}
           />
         )}
       </main>
 
-      {/* Global Overlays & Modals */}
+      {/* ===================================================================== */}
+      {/* GLOBAL OVERLAYS, DRAWERS & MODALS                                     */}
+      {/* ===================================================================== */}
       <AddMaterialModal
         isOpen={addMaterialOpen}
         initialTab={addMaterialInitialTab}
@@ -883,94 +1108,182 @@ export default function App() {
       />
 
       <FocusTimerModal
-        isOpen={focusModalOpen}
-        secondsLeft={focusSeconds}
+        isOpen={focusTimerOpen}
+        secondsLeft={focusSecondsLeft}
         running={focusRunning}
         onToggleRun={() => setFocusRunning((r) => !r)}
         onReset={() => {
           setFocusRunning(false);
-          setFocusSeconds(25 * 60);
+          setFocusSecondsLeft(25 * 60);
         }}
-        onClose={() => setFocusModalOpen(false)}
+        onClose={() => setFocusTimerOpen(false)}
       />
 
       <LiveVoiceTutorModal
         isOpen={voiceTutorOpen}
-        chapterTitle="d & f Block Elements"
+        chapterTitle={selectedMaterial?.chapter || 'General JEE Physics, Chemistry & Mathematics'}
+        materialContext={selectedMaterial?.contentSummary}
         onClose={() => setVoiceTutorOpen(false)}
       />
 
-      {workspaceConfirm && (
-        <WorkspaceConfirmModal
-          isOpen={workspaceConfirm.isOpen}
-          title={workspaceConfirm.title}
-          description={workspaceConfirm.description}
-          confirmLabel={workspaceConfirm.confirmLabel}
-          onConfirm={workspaceConfirm.action}
-          onCancel={() => setWorkspaceConfirm(null)}
-        />
-      )}
+      <WorkspaceConfirmModal
+        isOpen={workspaceSyncConfirmOpen}
+        title="Sync Study Schedule with Google Calendar & Tasks"
+        description="This will create study blocks on your primary Google Calendar and task items in your Google Tasks list for your pending JEE study tasks."
+        confirmLabel="Confirm & Sync Now"
+        onConfirm={async () => {
+          try {
+            const pending = tasks.filter((t) => !t.completed);
+            const res = await syncStudyTasksWithCalendarAndTasks(pending);
+            showToast(`Synced ${res.tasksCreated} JEE study tasks to Google Calendar & Tasks!`);
+          } catch (err: any) {
+            showToast(err?.message || 'Could not sync with Google Workspace.');
+          } finally {
+            setWorkspaceSyncConfirmOpen(false);
+          }
+        }}
+        onCancel={() => setWorkspaceSyncConfirmOpen(false)}
+      />
 
-      {/* Global Search (Ctrl+K) Modal */}
+      <ProfileModal
+        isOpen={profileModalOpen}
+        profile={studentProfile}
+        streakDays={streakDays}
+        xp={xp}
+        level={level}
+        onClose={() => setProfileModalOpen(false)}
+        onSaveProfile={handleSaveStudentProfile}
+        onExportUserData={handleExportAccountData}
+        onOpenLegalModal={(tab) => {
+          setProfileModalOpen(false);
+          handleOpenLegal(tab);
+        }}
+        onSignOut={async () => {
+          setProfileModalOpen(false);
+          await logoutUser();
+          setUnauthScreen('landing');
+        }}
+      />
+
+      <LegalComplianceModal
+        isOpen={legalModalState.isOpen}
+        initialTab={legalModalState.tab}
+        onClose={() => setLegalModalState((prev) => ({ ...prev, isOpen: false }))}
+      />
+
+      <InstantPracticeModal
+        config={instantPracticeConfig}
+        onClose={() => setInstantPracticeConfig(null)}
+        onEarnXp={(earned) => {
+          setXp((prev) => prev + earned);
+          showToast(`+${earned} XP earned!`);
+        }}
+        onLaunchFullCBT={() => {
+          setInstantPracticeConfig(null);
+          setInCBTMockMode(true);
+        }}
+        onRecordMistake={(q, ans) => handleRecordMistake(q, ans, 'Adaptive Drill')}
+      />
+
+      {/* Global Search Command Modal (Cmd+K) */}
       {searchModalOpen && (
         <div
           role="dialog"
           aria-modal="true"
           aria-label="Global Search"
-          className="fixed inset-0 z-50 bg-slate-900/50 flex items-start justify-center pt-20 p-4"
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-start justify-center pt-20 p-4"
         >
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-lg p-4 space-y-3">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-              <Search className="w-4 h-4 text-[#4F46E5]" />
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-xl overflow-hidden text-slate-900 dark:text-white">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3">
+              <Search className="w-5 h-5 text-indigo-600" />
               <input
                 type="text"
                 autoFocus
                 value={globalSearchQuery}
                 onChange={(e) => setGlobalSearchQuery(e.target.value)}
-                placeholder="Jump to chapter, tool, diagram preset, or mock test..."
-                className="flex-1 text-sm bg-transparent focus:outline-none"
+                placeholder="Jump to uploaded materials, Desmos calculator, Voice Tutor, or 75-Q CBT..."
+                className="flex-1 text-sm font-medium focus:outline-none bg-transparent"
               />
               <button
-                type="button"
                 onClick={() => setSearchModalOpen(false)}
-                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="space-y-1 text-xs">
+            <div className="p-3 max-h-80 overflow-y-auto space-y-1.5 text-xs">
               {[
-                { label: 'd & f Block – Study Workbench (Page 2)', nav: 'Study' as const },
-                { label: 'Create Studio – Inclined Plane 2D SVG & 3D Model', nav: 'Study' as const, sub: 'Create' as const },
-                { label: 'd & f Block – Revision Mind Map', nav: 'Revise' as const },
-                { label: 'JEE Main • Practice Mock (Full NTA CBT)', nav: 'CBT_MOCK' as const },
-                { label: 'Study Tools – Graphing Calculator (y = x² − 4)', tool: true },
+                ...materials.map((m) => ({
+                  label: `Uploaded Material: ${m.title} (${m.subject})`,
+                  action: () => {
+                    setSelectedMaterial(m);
+                    setActiveTab('Study');
+                    setStudySubTab('Chapter Notes');
+                  },
+                })),
+                {
+                  label: 'Upload PDF, Handwritten Photo, or 12-Hour YouTube Marathon',
+                  action: () => setAddMaterialOpen(true),
+                },
+                {
+                  label: 'Live Voice AI Tutor (Word-by-Word Streaming & Barge-In)',
+                  action: () => setVoiceTutorOpen(true),
+                },
+                {
+                  label: 'Desmos Graphing Calculator & Offline Scientific Calculator',
+                  action: () => setStudyToolsOpen(true),
+                },
+                {
+                  label: 'Full 75-Question NTA JEE Main CBT Mock Exam',
+                  action: () => {
+                    setCbtExamMode('JEE Main');
+                    setInCBTMockMode(true);
+                  },
+                },
+                {
+                  label: 'JEE Advanced Paper 1 Multi-Format CBT Mock Exam',
+                  action: () => {
+                    setCbtExamMode('JEE Advanced');
+                    setInCBTMockMode(true);
+                  },
+                },
+                {
+                  label: 'Revise: Multi-Level KaTeX Mind Maps & 4-Font Handwritten Notes',
+                  action: () => setActiveTab('Revise'),
+                },
               ]
-                .filter((item) =>
-                  item.label.toLowerCase().includes(globalSearchQuery.toLowerCase())
+                .filter(
+                  (item) =>
+                    !globalSearchQuery.trim() ||
+                    item.label.toLowerCase().includes(globalSearchQuery.toLowerCase())
                 )
-                .map((item, idx) => (
+                .map((item, i) => (
                   <button
-                    key={idx}
-                    type="button"
+                    key={i}
                     onClick={() => {
+                      item.action();
                       setSearchModalOpen(false);
-                      if (item.tool) {
-                        setStudyToolsOpen(true);
-                      } else if (item.nav) {
-                        if (item.sub) setStudyInitialSubTab(item.sub);
-                        setActiveNav(item.nav);
-                      }
                     }}
-                    className="w-full px-3 py-2.5 rounded-xl text-left font-medium hover:bg-[#EEF2FF] hover:text-[#4F46E5] transition-colors cursor-pointer"
+                    className="w-full p-3 rounded-xl hover:bg-indigo-50 dark:hover:bg-slate-800 text-left font-bold flex items-center justify-between cursor-pointer"
                   >
-                    {item.label}
+                    <span>{item.label}</span>
+                    <span className="text-indigo-600">Jump →</span>
                   </button>
                 ))}
             </div>
           </div>
         </div>
       )}
+
+      {/* Floating Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold shadow-lg flex items-center gap-2 border border-slate-700">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 }
+
+export default App;

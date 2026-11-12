@@ -1,6 +1,11 @@
 {
   "name": "LearnMate JEE",
   "description": "AI-powered JEE Main & Advanced study workspace turning your notes, PDFs, and lectures into interactive explanations, 3D/SVG diagrams, animated lessons, mind maps, and NTA CBT mocks.",
-  "requestFramePermissions": ["microphone", "camera"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
