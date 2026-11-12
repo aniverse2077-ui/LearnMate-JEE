@@ -58,9 +58,12 @@ import {
   listDriveStudyFiles,
   readGoogleDocContent,
   DriveFileItem,
+  saveDocumentToIndexedDb,
+  extractPdfTextAndMetadataWithPdfJs,
+  apiFetchWithAuth,
 } from '../services/workspaceService';
 import { CBT_MOCK_QUESTIONS } from '../data/jeeInitialContent';
-import { googleSignIn, getWorkspaceAccessToken } from '../firebase';
+import { googleSignIn, getWorkspaceAccessToken, registerActiveVoiceSocket } from '../firebase';
 import { LegalModalTabId } from './LandingAndAuth';
 import { MathRichText } from './MathRichText';
 
@@ -78,6 +81,8 @@ interface AddMaterialModalProps {
     sourceType: 'pdf' | 'photo' | 'youtube' | 'text' | 'drive';
     sourceRef: string;
     contentSummary: string;
+    originalFileUrl?: string;
+    originalMimeType?: string;
   }) => Promise<void>;
 }
 
@@ -127,7 +132,7 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
     setErrorText(null);
     setAnalyzing(true);
     setStatusMessage(
-      `Auto-identifying JEE subject & chapter and extracting ${lectureDurationHours}h marathon lecture notes, KaTeX formulas & mind map...`
+      `Auto-identifying JEE subject & chapter and extracting ${lectureDurationHours}h marathon lecture notes, derivations, formulas & mind map...`
     );
     try {
       const initialDetection = detectJeeSubjectAndChapter(
@@ -135,20 +140,19 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
         titleInput
       );
 
-      const res = await fetch('/api/ai/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { ok, data } = await apiFetchWithAuth<{ text?: string }>(
+        '/api/ai/analyze',
+        {
           youtubeUrl: youtubeUrl.trim() || 'https://www.youtube.com/watch',
           lectureDurationHours,
           transcriptOrOutline: transcriptOrOutline.trim(),
           sourceType: 'youtube',
-          prompt: `Automatically identify the JEE subject (Physics, Chemistry, or Mathematics) and chapter for "${initialDetection.chapter}" (${lectureDurationHours}-hour lecture) and extract complete chapter notes. Include timestamped concepts, **bold** fundamental laws, *italic* JEE exceptions, and KaTeX ($...$ and $$...$$) formulas.`,
-        }),
-      });
-      const data = await res.json();
+          prompt: `Automatically identify the JEE subject (Physics, Chemistry, or Mathematics) and chapter for "${initialDetection.chapter}" (${lectureDurationHours}-hour lecture) and extract exhaustive full chapter notes: Complete Theory, Step-by-Step Derivations, Solved Numerical Examples, Exceptions/Traps, and All Chapter Formulas ($...$ and $$...$$).`,
+        }
+      );
+      const extractedAiText = ok ? data.text || '' : '';
       const finalDetection = detectJeeSubjectAndChapter(
-        `${youtubeUrl} ${transcriptOrOutline} ${data.text || ''}`,
+        `${youtubeUrl} ${transcriptOrOutline} ${extractedAiText}`,
         titleInput
       );
 
@@ -158,9 +162,11 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
         chapter: finalDetection.chapter,
         sourceType: 'youtube',
         sourceRef: youtubeUrl.trim() || `YouTube ${lectureDurationHours}h Lecture`,
+        originalFileUrl: youtubeUrl.trim() || undefined,
+        originalMimeType: 'video/youtube',
         contentSummary:
-          data.text ||
-          `**${finalDetection.chapter}** (${finalDetection.subject} • ${lectureDurationHours}h Marathon Lecture): Complete KaTeX derivations, timestamped concept blocks, and *high-yield JEE Advanced trap alerts*.\n\n${transcriptOrOutline.trim()}`,
+          extractedAiText ||
+          `**${finalDetection.chapter}** (${finalDetection.subject} • ${lectureDurationHours}h Marathon Lecture)\n\n${transcriptOrOutline.trim()}`,
       });
       setYoutubeUrl('');
       setTranscriptOrOutline('');
@@ -184,38 +190,62 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
     setAnalyzing(true);
     setStatusMessage(
       mode === 'photo'
-        ? `Auto-detecting JEE subject & chapter and running Handwritten Notes OCR on ${file.name}...`
-        : `Auto-detecting JEE subject & chapter and extracting KaTeX equations & mind map from ${file.name}...`
+        ? `Auto-detecting JEE subject & chapter and running Handwritten Notes Scan on ${file.name}...`
+        : `Parsing ${file.name} via client-side PDF engine & storing binary in IndexedDB...`
     );
 
     try {
       const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve, reject) => {
+      const dataUrlPromise = new Promise<string>((resolve, reject) => {
         reader.onload = () => {
-          const result = String(reader.result || '');
-          resolve(result.split(',')[1] || '');
+          resolve(String(reader.result || ''));
         };
         reader.onerror = reject;
       });
       reader.readAsDataURL(file);
-      const base64Data = await base64Promise;
+      const fullDataUrl = await dataUrlPromise;
+      const base64Data = fullDataUrl.split(',')[1] || '';
+
+      let clientPdfText = '';
+      let pdfPageCount = 3;
+      if (mode === 'pdf' && file.name.toLowerCase().endsWith('.pdf')) {
+        const extractedPdf = await extractPdfTextAndMetadataWithPdfJs(file);
+        clientPdfText = extractedPdf.extractedText;
+        pdfPageCount = extractedPdf.pageCount;
+      }
+
+      const docId = `idb-doc-${Date.now()}`;
+      await saveDocumentToIndexedDb({
+        id: docId,
+        userId: 'active_user',
+        title: file.name,
+        mimeType: file.type || (mode === 'pdf' ? 'application/pdf' : 'image/jpeg'),
+        dataUrl: fullDataUrl,
+        extractedText: clientPdfText,
+        pageCount: pdfPageCount,
+        sizeBytes: file.size,
+        createdAt: new Date().toISOString(),
+      });
 
       const fileStem = file.name.replace(/\.[^/.]+$/, '');
-      const initialDetection = detectJeeSubjectAndChapter(fileStem, titleInput);
+      const initialDetection = detectJeeSubjectAndChapter(
+        `${fileStem} ${clientPdfText.slice(0, 2000)}`,
+        titleInput
+      );
+      const detectedMime = file.type || (mode === 'pdf' ? 'application/pdf' : 'image/jpeg');
 
-      const res = await fetch('/api/ai/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mediaBase64: base64Data,
-          mimeType: file.type || (mode === 'pdf' ? 'application/pdf' : 'image/jpeg'),
+      const { ok, data } = await apiFetchWithAuth<{ text?: string }>(
+        '/api/ai/analyze',
+        {
+          mediaBase64: base64Data.slice(0, 600000),
+          mimeType: detectedMime,
           sourceType: mode,
-          prompt: `Automatically identify whether this material belongs to JEE Physics, Chemistry, or Mathematics and which chapter it covers, then perform OCR and extract structured chapter notes for "${initialDetection.chapter}" from ${file.name}. Format all formulas in KaTeX ($...$ and $$...$$), highlight key laws in **bold**, and highlight exceptions/traps in *italics*.`,
-        }),
-      });
-      const data = await res.json();
+          prompt: `Automatically identify whether this material belongs to JEE Physics, Chemistry, or Mathematics and which chapter it covers, then extract exhaustive full chapter notes for "${initialDetection.chapter}" from ${file.name}: Complete Theory, Step-by-Step Derivations, Solved Numerical Examples, Exceptions/Traps, and All Formulas ($...$ and $$...$$).\n\nExtracted Text Context:\n${clientPdfText.slice(0, 4000)}`,
+        }
+      );
+      const aiText = ok ? data.text || '' : '';
       const finalDetection = detectJeeSubjectAndChapter(
-        `${fileStem} ${data.text || ''}`,
+        `${fileStem} ${clientPdfText.slice(0, 2000)} ${aiText}`,
         titleInput
       );
 
@@ -225,9 +255,12 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
         chapter: finalDetection.chapter,
         sourceType: mode,
         sourceRef: file.name,
+        originalFileUrl: fullDataUrl,
+        originalMimeType: detectedMime,
         contentSummary:
-          data.text ||
-          `**${finalDetection.chapter}** (${finalDetection.subject}): Extracted handwritten/PDF definitions, KaTeX derivations, and *critical JEE exam traps* from ${file.name}.`,
+          aiText ||
+          clientPdfText ||
+          `**${finalDetection.chapter}** (${finalDetection.subject}): IndexedDB-stored document (${pdfPageCount} pages) from ${file.name}.`,
       });
       setTitleInput('');
       onClose();
@@ -246,7 +279,7 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
     }
     setAnalyzing(true);
     setStatusMessage(
-      'Auto-identifying JEE subject & chapter and structuring your notes into KaTeX pages, flashcards & mind map...'
+      'Auto-identifying JEE subject & chapter and structuring your notes into full detailed pages, flashcards & mind map...'
     );
     try {
       const detected = detectJeeSubjectAndChapter(pastedText, titleInput);
@@ -440,7 +473,7 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
               rows={3}
               value={transcriptOrOutline}
               onChange={(e) => setTranscriptOrOutline(e.target.value)}
-              placeholder="Optional: Paste lecture chapters, timestamps, or key topics covered in the video for instant high-precision KaTeX note & mind-map generation..."
+              placeholder="Optional: Paste lecture chapters, timestamps, or key topics covered in the video for instant detailed note & mind-map generation..."
               className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800 text-xs"
             />
           </div>
@@ -454,7 +487,7 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
                 Upload JEE Chapter PDF or Handwritten Scan (up to 60 pages)
               </span>
               <span className="text-xs text-slate-500 mt-1 text-center">
-                Automatically generates KaTeX notes, multi-level Mind Map, Flashcards, Sticky Notes &amp; Chapter Quiz
+                Automatically generates Full Detailed Notes, Original PDF Viewer, Mind Map, Flashcards, Formula Book &amp; Chapter Quiz
               </span>
               <input
                 type="file"
@@ -471,10 +504,10 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
             <label className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl hover:border-[#4F46E5] transition-colors cursor-pointer bg-slate-50/60 dark:bg-slate-800/40">
               <ImageIcon className="w-8 h-8 text-[#4F46E5] mb-2" />
               <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                Upload Handwritten Notes Photo for AI OCR Extraction
+                Upload Handwritten Notes Photo for Smart Extraction
               </span>
               <span className="text-xs text-slate-500 mt-1 text-center">
-                Reads your handwriting, converts equations to KaTeX, and lets you switch between 4 realistic handwriting fonts
+                Reads your handwriting, formats mathematical equations cleanly, and lets you switch between 4 realistic handwriting fonts
               </span>
               <input
                 type="file"
@@ -492,7 +525,7 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
               rows={5}
               value={pastedText}
               onChange={(e) => setPastedText(e.target.value)}
-              placeholder="Paste your JEE notes, handwritten OCR text, reactions, or derivations here (supports KaTeX $...$ and **bold** highlights)..."
+              placeholder="Paste your JEE notes, handwritten transcription, reactions, or derivations here (supports $...$ equations and **bold** highlights)..."
               className="w-full p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs leading-relaxed"
             />
             <button
@@ -1919,18 +1952,26 @@ export const FocusTimerModal: React.FC<FocusTimerModalProps> = ({
 };
 
 // ============================================================================
-// 4. ChatGPT / Gemini-Style Live Voice Tutor Modal
-//    - Word-by-word live paragraph streaming for Speaker (You) and AI (Tutor)
+// 4. Classroom Teacher Live Voice Tutor Modal
+//    - 4 Teacher Personas: Hinglish IIT Faculty, Indian English Teacher, Pure Hindi, Pure English
+//    - Step-by-step question solver that asks pedagogical check-in questions
+//    - Word-by-word live paragraph streaming for Speaker (You) and Teacher
 //    - Interruptible speech (Barge-In button or speaking stops AI output immediately)
-//    - Live KaTeX math rendering inside voice transcript paragraphs
 //    - Persistent Voice Session History per chapter/material
 // ============================================================================
+export type VoiceTeacherPersonaId =
+  | 'hinglish_faculty'
+  | 'indian_english'
+  | 'pure_hindi'
+  | 'pure_english';
+
 export interface VoiceTurnEntry {
   id: string;
   speaker: 'You' | 'Tutor';
   text: string;
   timestamp: string;
   streaming?: boolean;
+  personaLabel?: string;
 }
 
 interface LiveVoiceTutorModalProps {
@@ -1948,6 +1989,7 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
 }) => {
   const storageKey = `learnmate_voice_history_${chapterTitle.replace(/\s+/g, '_').toLowerCase()}`;
   const [activeView, setActiveView] = useState<'live' | 'history'>('live');
+  const [teacherPersona, setTeacherPersona] = useState<VoiceTeacherPersonaId>('hinglish_faculty');
   const [connected, setConnected] = useState(false);
   const [micActive, setMicActive] = useState(false);
   const [aiSpeaking, setAiSpeaking] = useState(false);
@@ -1962,6 +2004,41 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
   const userStreamTimerRef = useRef<number | null>(null);
   const recognitionRef = useRef<any>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+
+  const PERSONA_OPTIONS: {
+    id: VoiceTeacherPersonaId;
+    label: string;
+    subtitle: string;
+    langCode: string;
+  }[] = [
+    {
+      id: 'hinglish_faculty',
+      label: 'Hinglish IIT Faculty',
+      subtitle: 'Warm Indian English + Hindi Coaching Style',
+      langCode: 'en-IN',
+    },
+    {
+      id: 'indian_english',
+      label: 'Indian English Teacher',
+      subtitle: 'Articulate Indian Professor Accent',
+      langCode: 'en-IN',
+    },
+    {
+      id: 'pure_hindi',
+      label: 'Pure Hindi (हिंदी शिक्षक)',
+      subtitle: 'Complete Classroom Explanation in Hindi',
+      langCode: 'hi-IN',
+    },
+    {
+      id: 'pure_english',
+      label: 'Pure English',
+      subtitle: 'Standard Academic English Professor',
+      langCode: 'en-US',
+    },
+  ];
+
+  const activePersonaObj =
+    PERSONA_OPTIONS.find((p) => p.id === teacherPersona) || PERSONA_OPTIONS[0];
 
   // Load saved voice history for this chapter
   useEffect(() => {
@@ -1995,6 +2072,7 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/api/live`);
     wsRef.current = ws;
+    registerActiveVoiceSocket(ws);
 
     ws.onmessage = (event) => {
       try {
@@ -2075,15 +2153,15 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
           text: chunk.trim(),
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           streaming: true,
+          personaLabel: speaker === 'Tutor' ? activePersonaObj.label : undefined,
         },
       ];
     });
   };
 
-  // Stream a full paragraph word-by-word into the transcript & speak it via TTS
+  // Stream a full paragraph word-by-word into the transcript & speak it like a real classroom teacher
   const streamUserAndTutorConversation = async (spokenUserText: string) => {
     if (!spokenUserText.trim()) return;
-    // Barge-in if AI was speaking
     handleInterruptSpeech();
     setStatusError(null);
 
@@ -2123,51 +2201,78 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
       }, 45);
     });
 
-    // 2. Fetch AI Tutor response with KaTeX formulas
+    // 2. Fetch Classroom Teacher response tailored to the active teacherPersona
     setAiSpeaking(true);
     let replyText = '';
     try {
-      const res = await fetch('/api/ai/think', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: `${spokenUserText} (Respond in a natural, conversational spoken paragraph suitable for a live JEE voice tutor, using KaTeX $...$ for any formula and **bold** for key concepts.)`,
+      const { ok, data } = await apiFetchWithAuth<{ text?: string }>(
+        '/api/ai/think',
+        {
+          prompt: spokenUserText,
+          teacherPersona,
+          isVoiceTeacher: true,
+          language:
+            teacherPersona === 'pure_hindi'
+              ? 'Pure Hindi'
+              : teacherPersona === 'hinglish_faculty'
+              ? 'Hinglish'
+              : 'English',
           context: materialContext || `Active Chapter: ${chapterTitle}`,
           contextMode: materialContext ? 'strict_material' : 'open_jee',
-        }),
-      });
-      const data = await res.json();
-      replyText =
-        data.text ||
-        `In **${chapterTitle}**, let us break down your question step by step. Remember the fundamental relationship $$F = -\\nabla U$$ and check *sign conventions carefully* before substituting numerical values.`;
-    } catch {
-      replyText = `Let us analyze this concept in **${chapterTitle}**. The core relation can be expressed as $$E = mc^2$$ and for rotational systems $$\\tau = I\\alpha$$. Watch out for the *moment of inertia axis shift trap* using the Parallel Axis Theorem $$I = I_{cm} + Md^2$$.`;
+        }
+      );
+      if (!ok || !data.text) {
+        setStatusError(
+          data.message ||
+            `[${data.errorCode || 'AI_SERVICE_UNAVAILABLE'}] Live AI Teacher is temporarily unavailable. Please click Retry.`
+        );
+        setAiSpeaking(false);
+        return;
+      }
+      replyText = data.text;
+    } catch (err: any) {
+      setStatusError(err?.message || 'Network error reaching AI Voice Teacher.');
+      setAiSpeaking(false);
+      return;
     }
 
-    // Speak aloud using browser speechSynthesis (if not muted) so audio plays synchronously with word-by-word streaming
+    // Speak aloud using browser speechSynthesis with matching Indian English / Hindi teacher accent
     if (!voiceMuted && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
         const cleanSpoken = replyText
-          .replace(/\$\$[^$]+\$\$/g, ' formula ')
-          .replace(/\$[^$]+\$/g, ' expression ')
+          .replace(/\$\$[^$]+\$\$/g, ' equation ')
+          .replace(/\$[^$]+\$/g, ' formula ')
           .replace(/[*#_`]/g, '');
         const utter = new SpeechSynthesisUtterance(cleanSpoken);
-        utter.rate = 1.04;
+        utter.lang = activePersonaObj.langCode;
+        utter.rate = 1.0;
+        const voices = window.speechSynthesis.getVoices();
+        const matchedVoice = voices.find((v) =>
+          v.lang.toLowerCase().includes(activePersonaObj.langCode.toLowerCase())
+        );
+        if (matchedVoice) utter.voice = matchedVoice;
         window.speechSynthesis.speak(utter);
       } catch {
         // ignore speech synthesis error
       }
     }
 
-    // 3. Stream AI Tutor response word-by-word in a paragraph
+    // 3. Stream Teacher response word-by-word in a cohesive paragraph
     const tutorWords = replyText.trim().split(/\s+/);
     const tutorTurnId = `vt-tutor-${Date.now()}`;
     const tutorTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     setTurns((prev) => [
       ...prev,
-      { id: tutorTurnId, speaker: 'Tutor', text: '', timestamp: tutorTime, streaming: true },
+      {
+        id: tutorTurnId,
+        speaker: 'Tutor',
+        text: '',
+        timestamp: tutorTime,
+        streaming: true,
+        personaLabel: activePersonaObj.label,
+      },
     ]);
 
     let wIdx = 0;
@@ -2188,7 +2293,7 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
           prev.map((t) => (t.id === tutorTurnId ? { ...t, streaming: false } : t))
         );
       }
-    }, 55);
+    }, 50);
   };
 
   const toggleMicrophone = async () => {
@@ -2204,7 +2309,6 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
       return;
     }
 
-    // Barge-in immediately when student activates mic
     handleInterruptSpeech();
     setStatusError(null);
     setMicActive(true);
@@ -2216,7 +2320,7 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
         const rec = new SpeechRec();
         rec.continuous = false;
         rec.interimResults = true;
-        rec.lang = 'en-IN';
+        rec.lang = activePersonaObj.langCode;
         recognitionRef.current = rec;
 
         rec.onresult = (event: any) => {
@@ -2253,10 +2357,13 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
       }
     }
 
-    // If running in headless/iframe without hardware mic, trigger an interactive spoken doubt stream
     setMicActive(false);
     streamUserAndTutorConversation(
-      `Explain the core formula and JEE Advanced trap for ${chapterTitle} with step-by-step derivation.`
+      teacherPersona === 'pure_hindi'
+        ? `सर, कृपया ${chapterTitle} का मुख्य सूत्र और संख्यात्मक प्रश्न हल करने की चरण-दर-चरण विधि समझाइए।`
+        : teacherPersona === 'hinglish_faculty'
+        ? `Sir, ${chapterTitle} ka core derivation aur JEE Advanced numerical solve karne ka step-by-step method samjhaiye.`
+        : `Professor, please explain the core derivation and step-by-step numerical method for ${chapterTitle}.`
     );
   };
 
@@ -2277,7 +2384,7 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
       aria-label="Live Voice Tutor"
       className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
     >
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-2xl p-6 space-y-4 flex flex-col max-h-[90vh]">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-3xl p-6 space-y-4 flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3.5">
           <div className="flex items-center gap-3">
@@ -2294,16 +2401,14 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
             </div>
             <div>
               <h3 className="font-display font-bold text-base sm:text-lg text-slate-900 dark:text-white">
-                Live AI Voice Tutor · {chapterTitle}
+                Live Classroom Voice Teacher · {chapterTitle}
               </h3>
               <p className="text-xs text-slate-500">
                 {aiSpeaking
-                  ? 'Tutor speaking — stream word-by-word (Click Interrupt or Mic to barge-in)'
+                  ? `${activePersonaObj.label} is explaining step-by-step (Click Interrupt or Mic to barge-in)`
                   : micActive
-                  ? 'Listening to your voice word-by-word...'
-                  : connected
-                  ? 'Ready for live voice study (Word-by-word paragraph transcript + KaTeX)'
-                  : 'Interactive Voice Mode Active (Word-by-word streaming + KaTeX)'}
+                  ? 'Listening to your question word-by-word...'
+                  : `${activePersonaObj.label} — ${activePersonaObj.subtitle}`}
               </p>
             </div>
           </div>
@@ -2319,7 +2424,7 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
                     : 'text-slate-600'
                 }`}
               >
-                Live Session
+                Live Class
               </button>
               <button
                 type="button"
@@ -2342,7 +2447,7 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
                 if ('speechSynthesis' in window) window.speechSynthesis.cancel();
               }}
               aria-label="Toggle voice audio"
-              className="p-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 cursor-pointer"
+              className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 cursor-pointer"
             >
               {voiceMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </button>
@@ -2355,6 +2460,29 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
             >
               <X className="w-5 h-5" />
             </button>
+          </div>
+        </div>
+
+        {/* 4-Way Classroom Teacher Persona & Accent Selector */}
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+          <span className="font-semibold text-slate-600 dark:text-slate-300 px-1">
+            Teacher Voice &amp; Language Mode:
+          </span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {PERSONA_OPTIONS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setTeacherPersona(p.id)}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer ${
+                  teacherPersona === p.id
+                    ? 'bg-[#4F46E5] text-white shadow-2xs'
+                    : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-indigo-300'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -2371,7 +2499,7 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
               }`}
             >
               {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-              <span>{micActive ? 'Stop Listening' : 'Speak by Voice (Start Talking)'}</span>
+              <span>{micActive ? 'Stop Listening' : 'Speak to Teacher (Start Talking)'}</span>
             </button>
 
             {aiSpeaking && (
@@ -2381,17 +2509,17 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
                 className="px-3.5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
               >
                 <Square className="w-3.5 h-3.5 fill-current" />
-                <span>Interrupt / Barge-In</span>
+                <span>Interrupt / Ask Follow-Up</span>
               </button>
             )}
           </div>
 
-          {/* Quick Voice Doubt Starters */}
+          {/* Quick Classroom Doubt Starters */}
           <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
             {[
-              `Explain ${chapterTitle} key formula`,
-              'Ask me a viva question',
-              'Common JEE trap here?',
+              `Walk me through ${chapterTitle} step by step`,
+              'Solve a numerical example with me',
+              'What exam trap should I avoid here?',
             ].map((q, i) => (
               <button
                 key={i}
@@ -2420,11 +2548,11 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
             <div className="text-center py-12 space-y-2 text-slate-400">
               <Sparkles className="w-7 h-7 mx-auto text-indigo-400" />
               <p className="font-semibold text-slate-600 dark:text-slate-300">
-                Start talking or click a voice prompt above to study by voice
+                Ask your teacher any question by voice or text below
               </p>
               <p className="text-[11px] max-w-md mx-auto">
-                Your spoken words and the AI Voice Tutor’s explanation stream word-by-word in live
-                paragraphs with visual KaTeX mathematical formulas and persistent history.
+                Your teacher explains concepts and solves problems step-by-step in Hindi, Hinglish,
+                or Indian English—streaming word-by-word with visual equations and check-in questions.
               </p>
             </div>
           ) : (
@@ -2443,8 +2571,10 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
                       turn.speaker === 'You' ? 'text-[#4F46E5]' : 'text-emerald-600'
                     }`}
                   >
-                    {turn.speaker === 'You' ? 'You (Student)' : 'AI Voice Tutor'}
-                    {turn.streaming ? ' · Streaming word-by-word...' : ''}
+                    {turn.speaker === 'You'
+                      ? 'You (Student)'
+                      : `Classroom Teacher (${turn.personaLabel || activePersonaObj.label})`}
+                    {turn.streaming ? ' · Explaining word-by-word...' : ''}
                   </span>
                   <span className="text-[10px] text-slate-400">{turn.timestamp}</span>
                 </div>
@@ -2582,7 +2712,7 @@ export interface StudentProfileData {
   displayName: string;
   email: string;
   avatarColor: string;
-  targetExam: 'JEE Main 2027' | 'JEE Advanced 2027' | 'JEE Main 2028';
+  targetExam: 'JEE Main 2027' | 'JEE Advanced 2027' | 'NEET UG 2027' | 'BITSAT 2027' | 'JEE Main 2028';
   preferredLanguage: 'English' | 'Hinglish';
   dailyGoalHours: number;
   batchStatus: 'Class 11' | 'Class 12' | 'Dropper';
@@ -2750,6 +2880,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               >
                 <option value="JEE Main 2027">JEE Main 2027</option>
                 <option value="JEE Advanced 2027">JEE Advanced 2027</option>
+                <option value="NEET UG 2027">NEET UG 2027</option>
+                <option value="BITSAT 2027">BITSAT 2027</option>
                 <option value="JEE Main 2028">JEE Main 2028</option>
               </select>
             </div>

@@ -14,10 +14,61 @@ import {
   doc,
   getDocFromServer,
 } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
 
+export interface FirebaseEnvConfig {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket: string;
+  messagingSenderId: string;
+  appId: string;
+  firestoreDatabaseId?: string;
+}
+
+export function loadValidatedFirebaseConfig(): FirebaseEnvConfig {
+  const apiKey = import.meta.env.VITE_FIREBASE_API_KEY as string | undefined;
+  const authDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined;
+  const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined;
+  const storageBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string | undefined;
+  const messagingSenderId = import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string | undefined;
+  const appId = import.meta.env.VITE_FIREBASE_APP_ID as string | undefined;
+  const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_DATABASE_ID as string | undefined;
+
+  const missingKeys: string[] = [];
+  if (!apiKey) missingKeys.push('VITE_FIREBASE_API_KEY');
+  if (!authDomain) missingKeys.push('VITE_FIREBASE_AUTH_DOMAIN');
+  if (!projectId) missingKeys.push('VITE_FIREBASE_PROJECT_ID');
+  if (!storageBucket) missingKeys.push('VITE_FIREBASE_STORAGE_BUCKET');
+  if (!messagingSenderId) missingKeys.push('VITE_FIREBASE_MESSAGING_SENDER_ID');
+  if (!appId) missingKeys.push('VITE_FIREBASE_APP_ID');
+
+  if (missingKeys.length > 0) {
+    throw new Error(
+      `[LearnMate JEE Configuration Error]: Missing required Firebase environment variables (${missingKeys.join(
+        ', '
+      )}). Please configure them in your environment variables.`
+    );
+  }
+
+  return {
+    apiKey: apiKey!,
+    authDomain: authDomain!,
+    projectId: projectId!,
+    storageBucket: storageBucket!,
+    messagingSenderId: messagingSenderId!,
+    appId: appId!,
+    firestoreDatabaseId:
+      firestoreDatabaseId && firestoreDatabaseId !== '(default)'
+        ? firestoreDatabaseId
+        : undefined,
+  };
+}
+
+const firebaseConfig = loadValidatedFirebaseConfig();
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = firebaseConfig.firestoreDatabaseId
+  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+  : getFirestore(app);
 export const auth = getAuth(app);
 
 // Google Workspace Scopes configured via set_up_oauth
@@ -44,6 +95,25 @@ let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 let fallbackUser: User | null = null;
 const authListeners = new Set<(user: User | null) => void>();
+const activeVoiceSockets = new Set<WebSocket>();
+
+export function registerActiveVoiceSocket(ws: WebSocket) {
+  activeVoiceSockets.add(ws);
+  ws.addEventListener('close', () => {
+    activeVoiceSockets.delete(ws);
+  });
+}
+
+export function closeAllActiveVoiceSockets() {
+  for (const ws of activeVoiceSockets) {
+    try {
+      ws.close();
+    } catch {
+      // ignore close errors
+    }
+  }
+  activeVoiceSockets.clear();
+}
 
 export const getAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken;
@@ -51,6 +121,24 @@ export const getAccessToken = async (): Promise<string | null> => {
 
 export const getWorkspaceAccessToken = (): string | null => {
   return cachedAccessToken;
+};
+
+export const getFirebaseIdToken = async (): Promise<string | null> => {
+  if (auth.currentUser && typeof auth.currentUser.getIdToken === 'function') {
+    try {
+      return await auth.currentUser.getIdToken();
+    } catch {
+      return null;
+    }
+  }
+  if (fallbackUser?.uid) {
+    return `local_token_${fallbackUser.uid}`;
+  }
+  return null;
+};
+
+export const getCurrentActiveUid = (): string => {
+  return auth.currentUser?.uid || fallbackUser?.uid || 'anonymous';
 };
 
 export const initAuth = (
@@ -197,10 +285,39 @@ export const emailSignIn = async (email: string, password: string): Promise<User
   }
 };
 
-export const logoutUser = async () => {
+/**
+ * Purges all user-scoped localStorage keys (`learnmate_*`) so shared-device sign-outs
+ * leave zero residual personal or study data on the machine.
+ */
+export function purgeUserLocalStorage(uid?: string) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const key = window.localStorage.key(i);
+    if (!key) continue;
+    if (
+      key.startsWith('learnmate_') ||
+      (uid && key.includes(uid))
+    ) {
+      keysToRemove.push(key);
+    }
+  }
+  for (const key of keysToRemove) {
+    window.localStorage.removeItem(key);
+  }
+}
+
+export const logoutUser = async (uid?: string) => {
+  const activeUid = uid || auth.currentUser?.uid || fallbackUser?.uid;
+  closeAllActiveVoiceSockets();
+  purgeUserLocalStorage(activeUid);
   fallbackUser = null;
-  await auth.signOut();
   cachedAccessToken = null;
+  try {
+    await auth.signOut();
+  } catch {
+    // ignore signOut errors on local sessions
+  }
   authListeners.forEach((fn) => fn(null));
 };
 

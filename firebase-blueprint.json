@@ -19,8 +19,8 @@
         },
         "targetExam": {
           "type": "string",
-          "description": "Target JEE session",
-          "enum": ["JEE Main 2027", "JEE Advanced 2027", "JEE Main 2028"],
+          "description": "Target exam session",
+          "enum": ["JEE Main 2027", "JEE Advanced 2027", "NEET UG 2027", "BITSAT 2027", "JEE Main 2028"],
           "maxLength": 40
         },
         "preferredLanguage": {
@@ -273,7 +273,7 @@
         },
         "examType": {
           "type": "string",
-          "enum": ["Main", "Advanced"],
+          "enum": ["Main", "Advanced", "NEET UG", "BITSAT"],
           "maxLength": 20
         },
         "score": {

@@ -44,7 +44,7 @@ service cloud.firestore {
       data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
       data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
       data.targetExam is string && data.targetExam.size() <= 40 &&
-      (data.targetExam == 'JEE Main 2027' || data.targetExam == 'JEE Advanced 2027' || data.targetExam == 'JEE Main 2028') &&
+      (data.targetExam == 'JEE Main 2027' || data.targetExam == 'JEE Advanced 2027' || data.targetExam == 'NEET UG 2027' || data.targetExam == 'BITSAT 2027' || data.targetExam == 'JEE Main 2028') &&
       data.preferredLanguage is string && data.preferredLanguage.size() <= 20 &&
       (data.preferredLanguage == 'English' || data.preferredLanguage == 'Hinglish') &&
       data.streakDays is int && data.streakDays >= 0 && data.streakDays <= 3650 &&
@@ -139,7 +139,7 @@ service cloud.firestore {
       data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
       data.mockTitle is string && data.mockTitle.size() >= 1 && data.mockTitle.size() <= 200 &&
       data.examType is string && data.examType.size() <= 20 &&
-      (data.examType == 'Main' || data.examType == 'Advanced') &&
+      (data.examType == 'Main' || data.examType == 'Advanced' || data.examType == 'NEET UG' || data.examType == 'BITSAT') &&
       data.score is int && data.score >= -100 && data.score <= 360 &&
       data.maxMarks is int && data.maxMarks >= 10 && data.maxMarks <= 360 &&
       (data.accuracy is int || data.accuracy is float) && data.accuracy >= 0 && data.accuracy <= 100 &&

@@ -45,7 +45,82 @@ import {
 } from '../data/jeeInitialContent';
 import { ThreeSceneCanvas, Preset3DId } from './ThreeSceneCanvas';
 import { MathRichText } from './MathRichText';
-import { CBTQuestion } from '../utils/jeeEngine';
+import {
+  CBTQuestion,
+  CanvasVectorStroke,
+  DiagramVectorOverlayItem,
+  parseOrGenerateMarathonTimestampChunks,
+} from '../utils/jeeEngine';
+import {
+  apiFetchWithAuth,
+  loadCanvasAnnotationsForMaterial,
+  saveCanvasAnnotationsForMaterial,
+} from '../services/workspaceService';
+
+function buildCustomParametricSvg(prompt: string, category: string): string {
+  const cleanTitle = prompt.replace(/[<>&"]/g, '').slice(0, 62) || 'JEE Concept Diagram';
+  const lower = `${prompt} ${category}`.toLowerCase();
+
+  if (lower.includes('bridge') || lower.includes('wheatstone') || lower.includes('kirchhoff')) {
+    return `<svg viewBox="0 0 680 380" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+      <rect width="680" height="380" rx="16" fill="#F8FAFC"/>
+      <text x="24" y="34" font-size="15" font-weight="700" fill="#0F172A">${cleanTitle}</text>
+      <polygon points="340,65 480,185 340,305 200,185" fill="none" stroke="#334155" stroke-width="3"/>
+      <line x1="110" y1="185" x2="200" y2="185" stroke="#334155" stroke-width="3"/>
+      <line x1="480" y1="185" x2="570" y2="185" stroke="#334155" stroke-width="3"/>
+      <line x1="340" y1="65" x2="340" y2="305" stroke="#4F46E5" stroke-width="2.5" stroke-dasharray="6,4"/>
+      <circle cx="340" cy="185" r="22" fill="#EEF2FF" stroke="#4F46E5" stroke-width="2.5"/>
+      <text x="333" y="191" font-size="15" font-weight="800" fill="#4F46E5">G</text>
+      <rect x="235" y="102" width="46" height="22" rx="4" fill="#DBEAFE" stroke="#2563EB" stroke-width="2"/>
+      <text x="247" y="117" font-size="12" font-weight="700" fill="#1D4ED8">R₁</text>
+      <rect x="395" y="102" width="46" height="22" rx="4" fill="#DBEAFE" stroke="#2563EB" stroke-width="2"/>
+      <text x="407" y="117" font-size="12" font-weight="700" fill="#1D4ED8">R₂</text>
+      <rect x="235" y="242" width="46" height="22" rx="4" fill="#D1FAE5" stroke="#059669" stroke-width="2"/>
+      <text x="247" y="257" font-size="12" font-weight="700" fill="#047857">R₃</text>
+      <rect x="395" y="242" width="46" height="22" rx="4" fill="#FEF3C7" stroke="#D97706" stroke-width="2"/>
+      <text x="407" y="257" font-size="12" font-weight="700" fill="#B45309">Rₓ</text>
+      <text x="230" y="352" font-size="13" font-weight="700" fill="#4F46E5">Balanced Condition: R₁ / R₂ = R₃ / Rₓ  (I_G = 0)</text>
+    </svg>`;
+  }
+
+  if (lower.includes('carnot') || lower.includes('thermo') || lower.includes('pv') || lower.includes('adiabatic')) {
+    return `<svg viewBox="0 0 680 380" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+      <rect width="680" height="380" rx="16" fill="#F8FAFC"/>
+      <text x="24" y="34" font-size="15" font-weight="700" fill="#0F172A">${cleanTitle}</text>
+      <line x1="90" y1="320" x2="600" y2="320" stroke="#334155" stroke-width="2.5"/>
+      <line x1="90" y1="320" x2="90" y2="55" stroke="#334155" stroke-width="2.5"/>
+      <text x="580" y="345" font-size="13" font-weight="700" fill="#334155">Volume (V) →</text>
+      <text x="30" y="70" font-size="13" font-weight="700" fill="#334155">P ↑</text>
+      <path d="M 160 95 Q 270 115 390 135 L 490 255 Q 350 240 240 215 Z" fill="#EEF2FF" stroke="#4F46E5" stroke-width="3"/>
+      <circle cx="160" cy="95" r="5" fill="#DC2626"/>
+      <text x="132" y="88" font-size="12" font-weight="700" fill="#DC2626">A (P₁,V₁,T_H)</text>
+      <circle cx="390" cy="135" r="5" fill="#DC2626"/>
+      <text x="402" y="135" font-size="12" font-weight="700" fill="#DC2626">B (Isothermal Q_in)</text>
+      <circle cx="490" cy="255" r="5" fill="#2563EB"/>
+      <text x="500" y="260" font-size="12" font-weight="700" fill="#2563EB">C (P₃,V₃,T_C)</text>
+      <circle cx="240" cy="215" r="5" fill="#2563EB"/>
+      <text x="155" y="232" font-size="12" font-weight="700" fill="#2563EB">D (Adiabatic)</text>
+      <text x="275" y="190" font-size="13" font-weight="800" fill="#4F46E5">∮ P dV = W_net</text>
+      <text x="210" y="355" font-size="13" font-weight="700" fill="#059669">η = 1 − T_C / T_H  |  PV^γ = const</text>
+    </svg>`;
+  }
+
+  return `<svg viewBox="0 0 680 380" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+    <rect width="680" height="380" rx="16" fill="#F8FAFC"/>
+    <text x="24" y="34" font-size="15" font-weight="700" fill="#0F172A">${cleanTitle}</text>
+    <line x1="80" y1="310" x2="600" y2="310" stroke="#475569" stroke-width="2.5"/>
+    <line x1="120" y1="335" x2="120" y2="65" stroke="#475569" stroke-width="2.5"/>
+    <path d="M 120 310 Q 290 80 520 310" fill="none" stroke="#4F46E5" stroke-width="3.5"/>
+    <line x1="120" y1="310" x2="260" y2="165" stroke="#DC2626" stroke-width="3"/>
+    <circle cx="260" cy="165" r="5" fill="#DC2626"/>
+    <text x="270" y="162" font-size="13" font-weight="700" fill="#DC2626">v₀ (Initial Vector)</text>
+    <line x1="320" y1="195" x2="320" y2="310" stroke="#059669" stroke-width="2" stroke-dasharray="5,5"/>
+    <text x="330" y="255" font-size="12" font-weight="700" fill="#059669">H_max = u²sin²θ / 2g</text>
+    <text x="155" y="300" font-size="13" font-weight="700" fill="#D97706">θ</text>
+    <text x="240" y="348" font-size="13" font-weight="700" fill="#1E293B">Range R = u²sin(2θ) / g</text>
+  </svg>`;
+}
+
 
 export interface MaterialItem {
   id: string;
@@ -54,6 +129,8 @@ export interface MaterialItem {
   chapter: string;
   sourceType: 'pdf' | 'photo' | 'youtube' | 'text' | 'drive';
   sourceRef?: string;
+  originalFileUrl?: string;
+  originalMimeType?: string;
   pageCount: number;
   currentPage: number;
   progressPct: number;
@@ -97,8 +174,10 @@ interface TutorChatTurn {
 
 interface HomeDashboardProps {
   userName: string;
-  targetExam: 'JEE Main 2027' | 'JEE Advanced 2027' | 'JEE Main 2028';
-  onChangeTargetExam: (exam: 'JEE Main 2027' | 'JEE Advanced 2027' | 'JEE Main 2028') => void;
+  targetExam: 'JEE Main 2027' | 'JEE Advanced 2027' | 'NEET UG 2027' | 'BITSAT 2027' | 'JEE Main 2028';
+  onChangeTargetExam: (
+    exam: 'JEE Main 2027' | 'JEE Advanced 2027' | 'NEET UG 2027' | 'BITSAT 2027' | 'JEE Main 2028'
+  ) => void;
   materials: MaterialItem[];
   tasks: StudyTaskItem[];
   streakDays: number;
@@ -162,23 +241,22 @@ export const HomeDashboardView: React.FC<HomeDashboardProps> = ({
     setDoubtLoading(true);
     setDoubtResponse(null);
     try {
-      const res = await fetch('/api/ai/think', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: doubtInput,
-          language: doubtLang,
-          contextMode: 'open_jee',
-          context:
-            materials.length > 0
-              ? `Uploaded materials: ${materials.map((m) => m.title).join(', ')}`
-              : 'JEE Main & Advanced Physics, Chemistry, and Mathematics.',
-        }),
+      const res = await apiFetchWithAuth<{ text: string }>('/api/ai/think', {
+        prompt: doubtInput,
+        language: doubtLang,
+        contextMode: 'open_jee',
+        context:
+          materials.length > 0
+            ? `Uploaded materials: ${materials.map((m) => m.title).join(', ')}`
+            : 'JEE Main & Advanced Physics, Chemistry, and Mathematics.',
       });
-      const data = await res.json();
-      setDoubtResponse(
-        data.text || 'Could not generate response. Please try asking your JEE doubt again.'
-      );
+      if (!res.ok) {
+        setDoubtResponse(`[${res.error.errorCode}] ${res.error.message}`);
+      } else {
+        setDoubtResponse(
+          res.data.text || 'Could not generate response. Please try asking your JEE doubt again.'
+        );
+      }
     } catch (err: any) {
       setDoubtResponse(err?.message || 'Error contacting AI Tutor.');
     } finally {
@@ -246,7 +324,7 @@ export const HomeDashboardView: React.FC<HomeDashboardProps> = ({
             mediaBase64: base64,
             mimeType: file.type || 'image/jpeg',
             sourceType: 'photo',
-            prompt: `Solve this JEE problem or handwritten note step-by-step in ${doubtLang} using KaTeX ($...$ and $$...$$), **bold** key laws, and *italic* exam traps.`,
+            prompt: `Solve this JEE problem or handwritten note step-by-step in ${doubtLang} using mathematical notation ($...$ and $$...$$), **bold** key laws, and *italic* exam traps.`,
           }),
         });
         const data = await res.json();
@@ -264,7 +342,7 @@ export const HomeDashboardView: React.FC<HomeDashboardProps> = ({
   const mathCount = materials.filter((m) => m.subject === 'Mathematics').length;
 
   return (
-    <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 space-y-6">
+    <div className="w-full px-6 lg:px-10 xl:px-12 py-6 space-y-6">
       {/* Top Greeting & Mode Switcher */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
@@ -280,13 +358,20 @@ export const HomeDashboardView: React.FC<HomeDashboardProps> = ({
                   value={targetExam}
                   onChange={(e) =>
                     onChangeTargetExam(
-                      e.target.value as 'JEE Main 2027' | 'JEE Advanced 2027' | 'JEE Main 2028'
+                      e.target.value as
+                        | 'JEE Main 2027'
+                        | 'JEE Advanced 2027'
+                        | 'NEET UG 2027'
+                        | 'BITSAT 2027'
+                        | 'JEE Main 2028'
                     )
                   }
                   className="font-bold text-slate-900 dark:text-white bg-transparent focus:outline-none cursor-pointer"
                 >
                   <option value="JEE Main 2027">JEE Main 2027</option>
                   <option value="JEE Advanced 2027">JEE Advanced 2027</option>
+                  <option value="NEET UG 2027">NEET UG 2027</option>
+                  <option value="BITSAT 2027">BITSAT 2027</option>
                   <option value="JEE Main 2028">JEE Main 2028</option>
                 </select>
               </div>
@@ -457,8 +542,8 @@ export const HomeDashboardView: React.FC<HomeDashboardProps> = ({
                   No materials uploaded yet — your workspace is 100% clean
                 </div>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Upload a chapter PDF, a photo of your handwritten notes for OCR, or an up-to-12-hour
-                  YouTube lecture to auto-generate KaTeX notes, flashcards, and mind maps.
+                  Upload a chapter PDF, a photo of your handwritten notes, or an up-to-12-hour
+                  YouTube lecture to auto-generate full detailed notes, formula sheets, flashcards, and mind maps.
                 </p>
                 <button
                   type="button"
@@ -691,8 +776,8 @@ export const HomeDashboardView: React.FC<HomeDashboardProps> = ({
                       Upload Your First JEE Study Material
                     </h2>
                     <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                      Upload any PDF chapter, handwritten note photo (OCR), or up-to-12-hour YouTube
-                      lecture to unlock KaTeX notes, handwritten font conversion, mind maps, and
+                      Upload any PDF chapter, handwritten note photo, or up-to-12-hour YouTube
+                      lecture to unlock full detailed notes, handwritten font conversion, formula book, mind maps, and
                       flashcards.
                     </p>
                   </div>
@@ -870,11 +955,11 @@ export const HomeDashboardView: React.FC<HomeDashboardProps> = ({
               </div>
             </div>
 
-            {/* Ask a Doubt Card with KaTeX Rendering */}
+            {/* Ask a Doubt Card */}
             <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-3.5 shadow-2xs">
               <div className="flex items-center justify-between">
                 <h2 className="font-display font-bold text-base text-slate-900 dark:text-white">
-                  Ask a Doubt (KaTeX Math)
+                  Ask a Doubt
                 </h2>
                 <div className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 text-xs font-semibold">
                   {(['English', 'Hinglish'] as const).map((lang) => (
@@ -1022,7 +1107,9 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     'Syllabus' | 'Chapter Notes' | 'My Materials' | 'AI Tutor' | 'Create' | 'Resources'
   >(initialSubTab);
   const [syllabusExam, setSyllabusExam] = useState<'Main' | 'Advanced'>('Main');
-  const [notesDensity, setNotesDensity] = useState<'Full' | 'Quick'>('Full');
+  const [notesDensity, setNotesDensity] = useState<'Full' | 'Quick' | 'Original' | 'Split'>('Full');
+  const [showAnnotateChoiceModal, setShowAnnotateChoiceModal] = useState(false);
+  const [annotateTarget, setAnnotateTarget] = useState<'original' | 'notes'>('notes');
 
   useEffect(() => {
     setSubTab(initialSubTab);
@@ -1063,7 +1150,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     'paper-ruled'
   );
 
-  // Dual-Mode PDF & Extracted Notes Full Annotation Editor state
+  // Dual-Mode PDF & Extracted Notes Full Annotation Editor state (Persisted Across Sessions)
   const [annotateMode, setAnnotateMode] = useState(false);
   const [annotationTool, setAnnotationTool] = useState<
     'pen' | 'highlighter' | 'eraser' | 'callout' | 'edit-text'
@@ -1073,8 +1160,11 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
   const [newCalloutText, setNewCalloutText] = useState('');
   const [editingPageText, setEditingPageText] = useState('');
   const [editingFormulasText, setEditingFormulasText] = useState('');
+  const [savedStrokes, setSavedStrokes] = useState<CanvasVectorStroke[]>([]);
+  const activeStrokePointsRef = useRef<{ x: number; y: number }[]>([]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isDrawingRef = useRef(false);
+  const [youtubeSeekSeconds, setYoutubeSeekSeconds] = useState<number>(0);
 
   // AI Tutor 2-Way Context Toggle & Chat Thread with One-Click "Create Visual"
   const [tutorContextMode, setTutorContextMode] = useState<'strict_material' | 'open_jee'>(
@@ -1103,10 +1193,24 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     'All'
   );
   const [activePreset, setActivePreset] = useState<Preset3DId>('Incline');
+  const [customSvgHtml, setCustomSvgHtml] = useState<string | null>(null);
+  const [diagramLoading, setDiagramLoading] = useState<boolean>(false);
   const [renderMode, setRenderMode] = useState<'2D SVG' | '3D Interactive'>('2D SVG');
   const [animateDiagramMotion, setAnimateDiagramMotion] = useState(false);
   const [diagramZoom, setDiagramZoom] = useState(100);
   const [saveBanner, setSaveBanner] = useState<string | null>(null);
+
+  // Interactive Draggable Vectors & Labels on 2D SVG Stage
+  const [diagramVectors, setDiagramVectors] = useState<DiagramVectorOverlayItem[]>([
+    { id: 'vec-1', label: 'N (Normal)', xPct: 44, yPct: 24, dx: -18, dy: -36, color: '#059669' },
+    { id: 'vec-2', label: 'mg (Weight)', xPct: 52, yPct: 68, dx: 0, dy: 42, color: '#DC2626' },
+    { id: 'vec-3', label: 'f_s (Friction)', xPct: 33, yPct: 48, dx: -36, dy: -20, color: '#4F46E5' },
+    { id: 'vec-4', label: 'mg sin θ', xPct: 64, yPct: 50, dx: 36, dy: 20, color: '#D97706' },
+  ]);
+  const [draggingVectorId, setDraggingVectorId] = useState<string | null>(null);
+  const [newVectorLabel, setNewVectorLabel] = useState('');
+  const [newVectorColor, setNewVectorColor] = useState('#4F46E5');
+  const svgStageRef = useRef<HTMLDivElement | null>(null);
 
   // Visual state
   const [visualEngine, setVisualEngine] = useState<'pro' | 'nano'>('pro');
@@ -1146,7 +1250,51 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
 
   useEffect(() => {
     setPageIdx(0);
+    setYoutubeSeekSeconds(0);
+    if (selectedMaterial?.id) {
+      const loaded = loadCanvasAnnotationsForMaterial(selectedMaterial.id);
+      setSavedStrokes(Array.isArray(loaded) ? loaded : []);
+    } else {
+      setSavedStrokes([]);
+    }
   }, [selectedMaterial?.id]);
+
+  // Replay persisted freehand strokes onto the annotation canvas whenever page, mode, or strokes change
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const activePageNum = currentPageData?.pageNumber || pageIdx + 1;
+    const pageStrokes = savedStrokes.filter(
+      (s) => s.pageNumber === activePageNum && s.target === annotateTarget
+    );
+
+    for (const stroke of pageStrokes) {
+      if (!stroke.points || stroke.points.length === 0) continue;
+      ctx.save();
+      if (stroke.tool === 'eraser') {
+        for (const pt of stroke.points) {
+          ctx.clearRect(pt.x - 12, pt.y - 12, 24, 24);
+        }
+      } else {
+        ctx.beginPath();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = stroke.color;
+        ctx.lineWidth = stroke.tool === 'highlighter' ? 14 : 2.5;
+        ctx.globalAlpha = stroke.tool === 'highlighter' ? 0.3 : 1.0;
+        ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+        for (let i = 1; i < stroke.points.length; i++) {
+          ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }, [savedStrokes, currentPageData?.pageNumber, pageIdx, annotateTarget, annotateMode, notesDensity]);
 
   useEffect(() => {
     if (currentPageData) {
@@ -1161,18 +1309,25 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     }
   }, [currentPageData?.pageNumber, selectedMaterial?.id]);
 
-  // Canvas drawing handlers for PDF/Notes Annotation Overlay
+  // Canvas drawing handlers for PDF/Notes Annotation Overlay (Persisted Across Sessions)
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!annotateMode || (annotationTool !== 'pen' && annotationTool !== 'highlighter' && annotationTool !== 'eraser'))
       return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / Math.max(1, rect.width);
+    const scaleY = canvas.height / Math.max(1, rect.height);
+    const pt = {
+      x: Number(((e.clientX - rect.left) * scaleX).toFixed(1)),
+      y: Number(((e.clientY - rect.top) * scaleY).toFixed(1)),
+    };
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     isDrawingRef.current = true;
+    activeStrokePointsRef.current = [pt];
     ctx.beginPath();
-    ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+    ctx.moveTo(pt.x, pt.y);
   };
 
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -1180,11 +1335,18 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / Math.max(1, rect.width);
+    const scaleY = canvas.height / Math.max(1, rect.height);
+    const pt = {
+      x: Number(((e.clientX - rect.left) * scaleX).toFixed(1)),
+      y: Number(((e.clientY - rect.top) * scaleY).toFixed(1)),
+    };
+    activeStrokePointsRef.current.push(pt);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     if (annotationTool === 'eraser') {
-      ctx.clearRect(e.clientX - rect.left - 12, e.clientY - rect.top - 12, 24, 24);
+      ctx.clearRect(pt.x - 12, pt.y - 12, 24, 24);
       return;
     }
 
@@ -1193,19 +1355,57 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     ctx.strokeStyle = penColor;
     ctx.lineWidth = annotationTool === 'highlighter' ? 14 : 2.5;
     ctx.globalAlpha = annotationTool === 'highlighter' ? 0.3 : 1.0;
-    ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+    ctx.lineTo(pt.x, pt.y);
     ctx.stroke();
   };
 
   const handleCanvasMouseUp = () => {
+    if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
+    const pts = activeStrokePointsRef.current;
+    if (pts.length > 0 && selectedMaterial?.id && (annotationTool === 'pen' || annotationTool === 'highlighter' || annotationTool === 'eraser')) {
+      const newStroke: CanvasVectorStroke = {
+        id: `stroke-${Date.now()}`,
+        tool: annotationTool,
+        color: penColor,
+        pageNumber: currentPageData?.pageNumber || pageIdx + 1,
+        target: annotateTarget,
+        points: pts,
+      };
+      const updated = [...savedStrokes, newStroke];
+      setSavedStrokes(updated);
+      void saveCanvasAnnotationsForMaterial(selectedMaterial.id, updated);
+    }
+    activeStrokePointsRef.current = [];
+  };
+
+  const handleUndoLastStroke = () => {
+    if (!selectedMaterial?.id || savedStrokes.length === 0) return;
+    const activePageNum = currentPageData?.pageNumber || pageIdx + 1;
+    const reversedIdx = [...savedStrokes]
+      .reverse()
+      .findIndex((s) => s.pageNumber === activePageNum && s.target === annotateTarget);
+    if (reversedIdx === -1) return;
+    const removeIdx = savedStrokes.length - 1 - reversedIdx;
+    const updated = savedStrokes.filter((_, idx) => idx !== removeIdx);
+    setSavedStrokes(updated);
+    void saveCanvasAnnotationsForMaterial(selectedMaterial.id, updated);
   };
 
   const clearAnnotationCanvas = () => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    if (selectedMaterial?.id) {
+      const activePageNum = currentPageData?.pageNumber || pageIdx + 1;
+      const remaining = savedStrokes.filter(
+        (s) => !(s.pageNumber === activePageNum && s.target === annotateTarget)
+      );
+      setSavedStrokes(remaining);
+      void saveCanvasAnnotationsForMaterial(selectedMaterial.id, remaining);
+    }
     setCallouts([]);
   };
 
@@ -1235,9 +1435,9 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     setTutorLoading(true);
     const promptText =
       style === 'Simpler'
-        ? `Explain Page ${currentPageData?.pageNumber || 1} (${currentPageData?.heading || selectedMaterial?.title || 'this concept'}) in simpler intuitive terms with an everyday analogy and KaTeX formula.`
+        ? `Explain Page ${currentPageData?.pageNumber || 1} (${currentPageData?.heading || selectedMaterial?.title || 'this concept'}) in simpler intuitive terms with an everyday analogy and formula.`
         : style === 'Deeper'
-        ? `Provide a rigorous JEE Advanced level derivation of ${currentPageData?.heading || selectedMaterial?.title || 'this concept'}, highlighting **fundamental laws** in bold, *exceptions/traps* in italics, and formulas in KaTeX ($...$ and $$...$$).`
+        ? `Provide a rigorous JEE Advanced level derivation of ${currentPageData?.heading || selectedMaterial?.title || 'this concept'}, highlighting **fundamental laws** in bold, *exceptions/traps* in italics, and mathematical equations.`
         : tutorQuestion.trim();
 
     if (!promptText) {
@@ -1255,22 +1455,18 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     if (style === 'Custom') setTutorQuestion('');
 
     try {
-      const res = await fetch('/api/ai/think', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: promptText,
-          language: tutorLang,
-          contextMode: tutorContextMode,
-          context: currentPageData
-            ? JSON.stringify(currentPageData)
-            : selectedMaterial?.contentSummary || '',
-        }),
+      const res = await apiFetchWithAuth<{ text: string }>('/api/ai/think', {
+        prompt: promptText,
+        language: tutorLang,
+        contextMode: tutorContextMode,
+        context: currentPageData
+          ? JSON.stringify(currentPageData)
+          : selectedMaterial?.contentSummary || '',
       });
-      const data = await res.json();
       const replyText =
-        data.text ||
-        `**Core Concept:** For **${selectedMaterial?.chapter || 'JEE Concept'}**, apply the governing equation $$F = -\\frac{dU}{dx}$$ and verify *boundary conditions* carefully.`;
+        res.ok && res.data.text
+          ? res.data.text
+          : `**Core Concept:** For **${selectedMaterial?.chapter || 'JEE Concept'}**, apply the governing equation $$F = -\\frac{dU}{dx}$$ and verify *boundary conditions* carefully.`;
 
       setTutorChat((prev) => [
         ...prev,
@@ -1340,7 +1536,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
         );
         await onSaveCreation({
           type: 'diagram',
-          title: `AI Tutor 2D Diagram · ${inferredPreset}`,
+          title: `2D Diagram · ${inferredPreset}`,
           prompt: autoPrompt,
           subject: selectedMaterial?.subject || 'Physics',
           preset: inferredPreset,
@@ -1364,7 +1560,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
         );
         await onSaveCreation({
           type: '3d',
-          title: `AI Tutor 3D Scene · ${inferredPreset}`,
+          title: `3D Scene · ${inferredPreset}`,
           prompt: autoPrompt,
           subject: selectedMaterial?.subject || 'Physics',
           preset: inferredPreset,
@@ -1372,13 +1568,11 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
           resolutionOrRatio: '3D Interactive',
         });
       } else if (targetType === 'Concept Image') {
-        const res = await fetch('/api/ai/image-pro', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: autoPrompt, imageSize: '1K' }),
+        const res = await apiFetchWithAuth<{ imageUrl?: string }>('/api/ai/image-pro', {
+          prompt: autoPrompt,
+          imageSize: '1K',
         });
-        const data = await res.json();
-        const imgUrl = data.imageUrl || '';
+        const imgUrl = res.ok && res.data.imageUrl ? res.data.imageUrl : '';
         setTutorChat((prev) =>
           prev.map((t) =>
             t.id === turn.id
@@ -1397,7 +1591,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
         );
         await onSaveCreation({
           type: 'visual',
-          title: `AI Tutor Visual · ${selectedMaterial?.chapter || inferredPreset}`,
+          title: `Concept Visual · ${selectedMaterial?.chapter || inferredPreset}`,
           prompt: autoPrompt,
           subject: selectedMaterial?.subject || 'Physics',
           preset: inferredPreset,
@@ -1405,13 +1599,11 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
           resolutionOrRatio: '1K',
         });
       } else if (targetType === 'Animated Video') {
-        const res = await fetch('/api/ai/video', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: autoPrompt, aspectRatio: '16:9' }),
+        const res = await apiFetchWithAuth<{ videoUrl?: string }>('/api/ai/video', {
+          prompt: autoPrompt,
+          aspectRatio: '16:9',
         });
-        const data = await res.json();
-        const vidUrl = data.videoUrl || '';
+        const vidUrl = res.ok && res.data.videoUrl ? res.data.videoUrl : '';
         setTutorChat((prev) =>
           prev.map((t) =>
             t.id === turn.id
@@ -1421,6 +1613,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                     type: 'Animated Video',
                     preset: inferredPreset,
                     videoUrl: vidUrl,
+                    svgHtml: !vidUrl ? DIAGRAM_SVG_PRESETS[inferredPreset] : undefined,
                     promptUsed: autoPrompt,
                   },
                 }
@@ -1429,11 +1622,11 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
         );
         await onSaveCreation({
           type: 'video',
-          title: `AI Tutor Animated Video · ${selectedMaterial?.chapter || inferredPreset}`,
+          title: `Animated Video · ${selectedMaterial?.chapter || inferredPreset}`,
           prompt: autoPrompt,
           subject: selectedMaterial?.subject || 'Physics',
           preset: inferredPreset,
-          assetData: vidUrl,
+          assetData: vidUrl || DIAGRAM_SVG_PRESETS[inferredPreset],
           resolutionOrRatio: '16:9',
         });
       }
@@ -1465,8 +1658,77 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     }
   };
 
+  const handleGenerateDiagramSvg = async () => {
+    const lower = diagramPrompt.toLowerCase();
+    let matchedPreset: Preset3DId = 'Incline';
+    if (lower.includes('lens') || lower.includes('optic')) {
+      matchedPreset = 'Convex Lens';
+    } else if (lower.includes('circuit') || lower.includes('rc')) {
+      matchedPreset = 'RC Circuit';
+    } else if (lower.includes('vsepr') || lower.includes('octahedral')) {
+      matchedPreset = 'VSEPR';
+    } else if (lower.includes('parabola')) {
+      matchedPreset = 'Parabola';
+    } else if (lower.includes('ellipse')) {
+      matchedPreset = 'Ellipse';
+    }
+    setActivePreset(matchedPreset);
+
+    // Check if the prompt is one of the default preset descriptions; if custom, synthesize custom SVG
+    const isExactPresetPrompt =
+      lower.includes('free-body diagram of a block on an inclined plane') ||
+      lower.startsWith('jee convex lens diagram') ||
+      lower.startsWith('jee rc circuit diagram') ||
+      lower.startsWith('jee vsepr diagram') ||
+      lower.startsWith('jee parabola diagram') ||
+      lower.startsWith('jee ellipse diagram');
+
+    if (isExactPresetPrompt) {
+      setCustomSvgHtml(null);
+      return;
+    }
+
+    setDiagramLoading(true);
+    try {
+      const res = await apiFetchWithAuth<{ svg?: string }>('/api/ai/search', {
+        prompt: `${diagramPrompt} (${diagramCategory})`,
+        mode: 'svg_diagram',
+        useSearch: false,
+      });
+      if (res.ok && res.data.svg && res.data.svg.includes('<svg')) {
+        setCustomSvgHtml(res.data.svg);
+      } else {
+        setCustomSvgHtml(buildCustomParametricSvg(diagramPrompt, diagramCategory));
+      }
+    } catch {
+      setCustomSvgHtml(buildCustomParametricSvg(diagramPrompt, diagramCategory));
+    } finally {
+      setDiagramLoading(false);
+    }
+  };
+
+  const injectVectorsIntoSvg = (rawSvg: string): string => {
+    if (!rawSvg.includes('</svg>') || diagramVectors.length === 0) return rawSvg;
+    const overlayMarkup = diagramVectors
+      .map((v) => {
+        const x = Math.round((v.xPct / 100) * 680);
+        const y = Math.round((v.yPct / 100) * 380);
+        const x2 = x + v.dx;
+        const y2 = y + v.dy;
+        return `<g>
+          <line x1="${x}" y1="${y}" x2="${x2}" y2="${y2}" stroke="${v.color}" stroke-width="3" />
+          <circle cx="${x2}" cy="${y2}" r="4" fill="${v.color}" />
+          <rect x="${x - 4}" y="${y - 16}" rx="6" width="${Math.max(48, v.label.length * 7 + 12)}" height="22" fill="#FFFFFF" stroke="${v.color}" stroke-width="1.5"/>
+          <text x="${x + 2}" y="${y - 1}" font-size="11" font-weight="700" fill="${v.color}">${v.label}</text>
+        </g>`;
+      })
+      .join('\n');
+    return rawSvg.replace('</svg>', `${overlayMarkup}\n</svg>`);
+  };
+
   const handleExportSvg = () => {
-    const svgContent = DIAGRAM_SVG_PRESETS[activePreset];
+    const baseSvg = customSvgHtml || DIAGRAM_SVG_PRESETS[activePreset];
+    const svgContent = injectVectorsIntoSvg(baseSvg);
     const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1477,16 +1739,20 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
   };
 
   const handleSaveDiagramOr3D = async () => {
+    const baseSvg = customSvgHtml || DIAGRAM_SVG_PRESETS[activePreset];
+    const activeSvg = injectVectorsIntoSvg(baseSvg);
     await onSaveCreation({
       type: renderMode === '3D Interactive' ? '3d' : 'diagram',
-      title: `${activePreset} (${renderMode})`,
+      title: customSvgHtml
+        ? `${diagramPrompt.slice(0, 36)} (${renderMode})`
+        : `${activePreset} (${renderMode})`,
       prompt: diagramPrompt,
       subject: subjectFilter === 'All' ? 'Physics' : subjectFilter,
       preset: activePreset,
-      assetData: DIAGRAM_SVG_PRESETS[activePreset],
+      assetData: activeSvg,
       resolutionOrRatio: renderMode,
     });
-    setSaveBanner(`Saved "${activePreset}" to your Saved Library!`);
+    setSaveBanner(`Saved to Saved Library!`);
     setTimeout(() => setSaveBanner(null), 3000);
   };
 
@@ -1499,23 +1765,36 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
         visualEngine === 'pro'
           ? { prompt: diagramPrompt, imageSize }
           : { prompt: diagramPrompt, imageBase64: editBase64, mimeType: 'image/png' };
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.imageUrl) {
-        throw new Error(data.error || 'Could not generate concept visual.');
+      const res = await apiFetchWithAuth<{ imageUrl?: string }>(endpoint, body);
+      if (!res.ok || !res.data.imageUrl) {
+        // Fallback to high-resolution SVG data URI so student always gets a crisp visual diagram
+        const fallbackSvg = buildCustomParametricSvg(diagramPrompt, diagramCategory);
+        const svgDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(fallbackSvg)}`;
+        setGeneratedImageUrl(svgDataUrl);
+        await onSaveCreation({
+          type: 'visual',
+          title: `${diagramPrompt.slice(0, 32)} (${imageSize})`,
+          prompt: diagramPrompt,
+          subject: subjectFilter,
+          preset: activePreset,
+          assetData: svgDataUrl,
+          resolutionOrRatio: imageSize,
+        });
+        if (!res.ok) {
+          setVisualError(
+            `Upstream Image API Notice (${res.error.errorCode}): Rendered vector concept diagram instead.`
+          );
+        }
+        return;
       }
-      setGeneratedImageUrl(data.imageUrl);
+      setGeneratedImageUrl(res.data.imageUrl);
       await onSaveCreation({
         type: 'visual',
-        title: `${activePreset} Visual (${visualEngine === 'pro' ? imageSize : 'Nano Banana 2.1'})`,
+        title: `${activePreset} Visual (${visualEngine === 'pro' ? imageSize : 'Edited'})`,
         prompt: diagramPrompt,
         subject: subjectFilter,
         preset: activePreset,
-        assetData: data.imageUrl,
+        assetData: res.data.imageUrl,
         resolutionOrRatio: visualEngine === 'pro' ? imageSize : 'Edited',
       });
     } catch (err: any) {
@@ -1529,28 +1808,38 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     setVideoLoading(true);
     setVideoError(null);
     try {
-      const res = await fetch('/api/ai/video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: `Educational JEE physics/chemistry animated explanation: ${diagramPrompt}`,
-          aspectRatio: videoAspectRatio,
-          base64Image: videoPhotoBase64,
-          mimeType: 'image/png',
-        }),
+      const res = await apiFetchWithAuth<{ videoUrl?: string }>('/api/ai/video', {
+        prompt: `Educational JEE physics/chemistry animated explanation: ${diagramPrompt}`,
+        aspectRatio: videoAspectRatio,
+        base64Image: videoPhotoBase64,
+        mimeType: 'image/png',
       });
-      const data = await res.json();
-      if (!res.ok || !data.videoUrl) {
-        throw new Error(data.error || 'Could not generate Omni Flash video.');
+      if (!res.ok || !res.data.videoUrl) {
+        setVideoError(
+          !res.ok
+            ? `[${res.error.errorCode}] ${res.error.message} — Switched to interactive 3D physics motion preview below.`
+            : 'Switched to interactive 3D physics motion preview.'
+        );
+        setAnimateDiagramMotion(true);
+        await onSaveCreation({
+          type: '3d',
+          title: `${activePreset} Animated 3D Lesson (${videoAspectRatio})`,
+          prompt: diagramPrompt,
+          subject: subjectFilter,
+          preset: activePreset,
+          assetData: DIAGRAM_SVG_PRESETS[activePreset],
+          resolutionOrRatio: videoAspectRatio,
+        });
+        return;
       }
-      setGeneratedVideoUrl(data.videoUrl);
+      setGeneratedVideoUrl(res.data.videoUrl);
       await onSaveCreation({
         type: 'video',
         title: `${activePreset} Animated Lesson (${videoAspectRatio})`,
         prompt: diagramPrompt,
         subject: subjectFilter,
         preset: activePreset,
-        assetData: data.videoUrl,
+        assetData: res.data.videoUrl,
         resolutionOrRatio: videoAspectRatio,
       });
     } catch (err: any) {
@@ -1627,19 +1916,26 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
             Chapter Notes
           </button>
           <div className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 text-[11px]">
-            {(['Full', 'Quick'] as const).map((d) => (
+            {(
+              [
+                { id: 'Full', label: 'Full Detailed' },
+                { id: 'Quick', label: 'Quick' },
+                { id: 'Original', label: 'Original File' },
+                { id: 'Split', label: 'Split Screen' },
+              ] as const
+            ).map((d) => (
               <button
-                key={d}
+                key={d.id}
                 type="button"
                 onClick={() => {
-                  setNotesDensity(d);
+                  setNotesDensity(d.id);
                   setSubTab('Chapter Notes');
                 }}
                 className={`px-2 py-0.5 rounded font-semibold cursor-pointer ${
-                  notesDensity === d ? 'bg-[#EEF2FF] text-[#4F46E5]' : 'text-slate-500'
+                  notesDensity === d.id ? 'bg-[#EEF2FF] text-[#4F46E5]' : 'text-slate-500'
                 }`}
               >
-                {d}
+                {d.label}
               </button>
             ))}
           </div>
@@ -1663,7 +1959,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
 
       {/* 1. 3-in-1 Syllabus Hub */}
       {subTab === 'Syllabus' && (
-        <div className="max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-5 space-y-5 flex-1">
+        <div className="w-full px-6 lg:px-10 xl:px-12 py-5 space-y-5 flex-1">
           <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xs">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
@@ -1897,7 +2193,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
 
       {/* 2. Searchable Student Material Library (Sub-Tab: My Materials) */}
       {subTab === 'My Materials' && (
-        <div className="max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-5 space-y-5 flex-1">
+        <div className="w-full px-6 lg:px-10 xl:px-12 py-5 space-y-5 flex-1">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <div className="text-[11px] font-bold tracking-wider uppercase text-[#4F46E5]">
@@ -2032,9 +2328,9 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
         </div>
       )}
 
-      {/* 3. Split-Screen Study Workbench (Sub-Tabs: Chapter Notes & AI Tutor) */}
+      {/* 3. Full-Desktop Study Workbench (Sub-Tabs: Chapter Notes & AI Tutor) */}
       {(subTab === 'Chapter Notes' || subTab === 'AI Tutor') && (
-        <div className="max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-4 flex-1 flex flex-col gap-4">
+        <div className="w-full px-6 lg:px-10 xl:px-12 py-5 flex-1 flex flex-col gap-4">
           {!selectedMaterial || !currentPageData ? (
             /* Clean Zero-State when no material has been uploaded yet */
             <div className="rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700 p-10 my-4 text-center space-y-4">
@@ -2047,7 +2343,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                 </h2>
                 <p className="text-xs text-slate-500 leading-relaxed">
                   LearnMate JEE starts 100% clean with zero preloaded demo notes. Upload a PDF
-                  chapter, a photo of your handwritten notes (for OCR + 4-font handwriting
+                  chapter, a photo of your handwritten notes (for 4-font handwriting
                   conversion), or an up-to-12-hour YouTube marathon lecture.
                 </p>
               </div>
@@ -2066,7 +2362,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                   className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 inline-flex items-center gap-1.5 cursor-pointer"
                 >
                   <ImageIcon className="w-4 h-4 text-[#4F46E5]" />
-                  <span>+ Handwritten Notes Photo (OCR)</span>
+                  <span>+ Handwritten Notes Photo</span>
                 </button>
                 <button
                   type="button"
@@ -2088,6 +2384,87 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
             </div>
           ) : (
             <>
+              {/* Dual-Target "Annotate and Edit" Choice Modal */}
+              {showAnnotateChoiceModal && (
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Choose What to Annotate and Edit"
+                  className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+                >
+                  <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-xl p-6 space-y-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <span className="px-2.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[10px] font-extrabold uppercase tracking-wider">
+                          Annotate &amp; Edit Mode
+                        </span>
+                        <h3 className="font-display font-extrabold text-lg text-slate-900 dark:text-white mt-1">
+                          What would you like to annotate or edit?
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Choose whether to annotate your actual uploaded material or the full detailed chapter notes generated from your scan.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowAnnotateChoiceModal(false)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Option 1: Annotate Original Uploaded Material */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAnnotateTarget('original');
+                          setNotesDensity('Original');
+                          setAnnotationTool('pen');
+                          setAnnotateMode(true);
+                          setShowAnnotateChoiceModal(false);
+                        }}
+                        className="p-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 hover:border-indigo-600 bg-slate-50/60 dark:bg-slate-800/60 text-left space-y-2.5 transition-all cursor-pointer group"
+                      >
+                        <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                          <Eye className="w-5 h-5" />
+                        </div>
+                        <div className="font-display font-extrabold text-sm text-slate-900 dark:text-white">
+                          1. Annotate Original Uploaded Material
+                        </div>
+                        <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                          Draw with freehand pen, highlight, or pin sticky callouts directly over your uploaded{' '}
+                          <strong>{selectedMaterial.sourceType.toUpperCase()}</strong> file ({selectedMaterial.title}).
+                        </p>
+                      </button>
+
+                      {/* Option 2: Annotate & Edit Full Detailed Notes */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAnnotateTarget('notes');
+                          if (notesDensity === 'Original') setNotesDensity('Full');
+                          setAnnotateMode(true);
+                          setShowAnnotateChoiceModal(false);
+                        }}
+                        className="p-4 rounded-2xl border-2 border-indigo-200 dark:border-indigo-800 hover:border-indigo-600 bg-indigo-50/40 dark:bg-indigo-950/30 text-left space-y-2.5 transition-all cursor-pointer group"
+                      >
+                        <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center">
+                          <Edit3 className="w-5 h-5" />
+                        </div>
+                        <div className="font-display font-extrabold text-sm text-slate-900 dark:text-white">
+                          2. Annotate &amp; Edit Full Detailed Notes
+                        </div>
+                        <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                          Highlight, draw, pin sticky notes, or directly edit the complete theory, derivations, solved examples, and formulas.
+                        </p>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Breadcrumb & Action Bar */}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
@@ -2098,11 +2475,36 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                   </h1>
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-200">
                     <CheckCircle2 className="w-3.5 h-3.5" />
-                    KaTeX &amp; OCR Active
+                    Detailed Notes &amp; Equations Ready
                   </span>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
+                  {/* View Mode Switcher right in the Workbench Header */}
+                  <div className="inline-flex items-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1 text-xs font-bold">
+                    {(
+                      [
+                        { id: 'Full', label: 'Full Notes' },
+                        { id: 'Quick', label: 'Quick Notes' },
+                        { id: 'Original', label: 'View Original File' },
+                        { id: 'Split', label: 'Split Screen' },
+                      ] as const
+                    ).map((mode) => (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => setNotesDensity(mode.id)}
+                        className={`px-3 py-1 rounded-lg transition-colors cursor-pointer ${
+                          notesDensity === mode.id
+                            ? 'bg-indigo-600 text-white shadow-2xs'
+                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
+                  </div>
+
                   <button
                     type="button"
                     onClick={() =>
@@ -2144,8 +2546,8 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
 
               {/* Split-Screen Workbench */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1">
-                {/* Left Document Viewer + Handwritten View + Full Annotation Editor (7 Cols) */}
-                <div className="lg:col-span-7 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between overflow-hidden shadow-2xs">
+                {/* Left Document Viewer + Original PDF/Video Viewer + Handwritten View + Full Annotation Editor (8 Cols on wide screen) */}
+                <div className="lg:col-span-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col justify-between overflow-hidden shadow-2xs">
                   {/* Viewer Top Toolbar */}
                   <div className="px-4 py-2.5 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
                     <div className="flex items-center gap-2">
@@ -2211,10 +2613,16 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                         <span>{handwrittenView ? 'Handwritten View ON' : 'Handwritten View'}</span>
                       </button>
 
-                      {/* Toggle Full Annotation & Rich-Text Editor */}
+                      {/* Toggle Dual-Target Annotation & Editor (Opens Choice Modal when turning on) */}
                       <button
                         type="button"
-                        onClick={() => setAnnotateMode((v) => !v)}
+                        onClick={() => {
+                          if (annotateMode) {
+                            setAnnotateMode(false);
+                          } else {
+                            setShowAnnotateChoiceModal(true);
+                          }
+                        }}
                         className={`px-3 py-1 rounded-lg border font-semibold inline-flex items-center gap-1.5 cursor-pointer ${
                           annotateMode
                             ? 'border-[#4F46E5] bg-[#EEF2FF] text-[#4F46E5]'
@@ -2222,7 +2630,11 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                         }`}
                       >
                         <Edit3 className="w-3.5 h-3.5" />
-                        <span>{annotateMode ? 'Editing & Annotating' : 'Annotate & Edit'}</span>
+                        <span>
+                          {annotateMode
+                            ? `Annotating: ${annotateTarget === 'original' ? 'Original File' : 'Detailed Notes'}`
+                            : 'Annotate & Edit'}
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -2282,16 +2694,48 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                     </div>
                   )}
 
-                  {/* Full Dual-Mode Annotation & Rich-Text KaTeX Editor Toolbar */}
+                  {/* Full Dual-Mode Annotation & Rich-Text Equation Editor Toolbar */}
                   {annotateMode && (
                     <div className="px-4 py-2.5 bg-[#EEF2FF]/70 dark:bg-indigo-950/40 border-b border-indigo-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
                       <div className="flex flex-wrap items-center gap-1.5">
+                        {/* Target Switcher inside Annotation Bar */}
+                        <div className="inline-flex rounded-lg bg-white dark:bg-slate-800 border border-indigo-200 p-0.5 mr-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAnnotateTarget('original');
+                              setNotesDensity('Original');
+                            }}
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
+                              annotateTarget === 'original'
+                                ? 'bg-indigo-600 text-white'
+                                : 'text-slate-600'
+                            }`}
+                          >
+                            Original File
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAnnotateTarget('notes');
+                              if (notesDensity === 'Original') setNotesDensity('Full');
+                            }}
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
+                              annotateTarget === 'notes'
+                                ? 'bg-indigo-600 text-white'
+                                : 'text-slate-600'
+                            }`}
+                          >
+                            Detailed Notes
+                          </button>
+                        </div>
+
                         {[
                           { id: 'pen', label: 'Pen', icon: PenTool },
                           { id: 'highlighter', label: 'Highlighter', icon: Highlighter },
                           { id: 'eraser', label: 'Eraser', icon: Eraser },
                           { id: 'callout', label: 'Sticky Callout', icon: StickyNote },
-                          { id: 'edit-text', label: 'Edit Notes & KaTeX', icon: Edit3 },
+                          { id: 'edit-text', label: 'Edit Notes & Equations', icon: Edit3 },
                         ].map((t) => {
                           const Icon = t.icon;
                           return (
@@ -2327,115 +2771,380 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                         ))}
                         <button
                           type="button"
+                          onClick={handleUndoLastStroke}
+                          className="px-2 py-1 rounded bg-white border border-slate-200 text-[11px] font-semibold text-slate-700 hover:text-indigo-600 cursor-pointer"
+                        >
+                          Undo Stroke
+                        </button>
+                        <button
+                          type="button"
                           onClick={clearAnnotationCanvas}
                           className="px-2 py-1 rounded bg-white border border-slate-200 text-[11px] font-semibold text-slate-600 hover:text-red-600 cursor-pointer"
                         >
-                          Clear Ink
+                          Clear Ink ({savedStrokes.filter((s) => s.pageNumber === (currentPageData?.pageNumber || pageIdx + 1) && s.target === annotateTarget).length})
                         </button>
                       </div>
                     </div>
                   )}
 
-                  {/* Document Sheet Content */}
+                  {/* Document Sheet Content: Supports Full Notes, Quick Notes, Original Uploaded File Viewer, and Split Screen */}
                   <div
                     className={`relative p-6 sm:p-8 space-y-5 flex-1 overflow-y-auto ${
                       handwrittenView ? `${handwritingFont} ${paperStyle}` : ''
                     }`}
                     style={{ fontSize: `${zoomLevel}%` }}
                   >
-                    {/* Interactive Freehand Pen / Highlighter Canvas Overlay */}
-                    {annotateMode &&
-                      (annotationTool === 'pen' ||
-                        annotationTool === 'highlighter' ||
-                        annotationTool === 'eraser') && (
-                        <canvas
-                          ref={canvasRef}
-                          width={760}
-                          height={620}
-                          onMouseDown={handleCanvasMouseDown}
-                          onMouseMove={handleCanvasMouseMove}
-                          onMouseUp={handleCanvasMouseUp}
-                          onMouseLeave={handleCanvasMouseUp}
-                          className="absolute inset-0 w-full h-full z-10 cursor-crosshair"
-                        />
-                      )}
+                    {/* Persistent Freehand Pen / Highlighter Canvas Overlay */}
+                    {(annotateMode ||
+                      savedStrokes.some(
+                        (s) =>
+                          s.pageNumber === (currentPageData?.pageNumber || pageIdx + 1) &&
+                          s.target === annotateTarget
+                      )) && (
+                      <canvas
+                        ref={canvasRef}
+                        width={960}
+                        height={680}
+                        onMouseDown={handleCanvasMouseDown}
+                        onMouseMove={handleCanvasMouseMove}
+                        onMouseUp={handleCanvasMouseUp}
+                        onMouseLeave={handleCanvasMouseUp}
+                        className={`absolute inset-0 w-full h-full z-10 ${
+                          annotateMode &&
+                          (annotationTool === 'pen' ||
+                            annotationTool === 'highlighter' ||
+                            annotationTool === 'eraser')
+                            ? 'cursor-crosshair'
+                            : 'pointer-events-none'
+                        }`}
+                      />
+                    )}
 
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="px-2.5 py-0.5 rounded-md bg-indigo-50 text-[#4F46E5] text-xs font-bold">
-                        {selectedMaterial.subject} · {selectedMaterial.sourceType.toUpperCase()}
-                      </span>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-0.5 rounded-md bg-indigo-50 text-[#4F46E5] text-xs font-bold">
+                          {selectedMaterial.subject} · {selectedMaterial.sourceType.toUpperCase()}
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold">
+                          Mode: {notesDensity === 'Full' ? 'Full Detailed Notes (All 4 Sections)' : notesDensity === 'Quick' ? 'Quick Revision Summary' : notesDensity === 'Original' ? 'Original Uploaded Material' : 'Split Screen (Original + Full Notes)'}
+                        </span>
+                      </div>
                       <span className="text-xs text-slate-400">
-                        **Bold** = Key Law · *Italic* = Exam Trap · KaTeX Math
+                        **Bold** = Key Law · *Italic* = Exam Trap · Visual Equations
                       </span>
                     </div>
 
-                    <h2 className="font-display font-extrabold text-xl sm:text-2xl text-slate-900 dark:text-white">
-                      <MathRichText content={currentPageData.heading} inline />
-                    </h2>
+                    {/* ORIGINAL UPLOADED MATERIAL VIEWER (Shown in 'Original' or Left Half of 'Split') */}
+                    {(notesDensity === 'Original' || notesDensity === 'Split') && (
+                      <div
+                        className={
+                          notesDensity === 'Split'
+                            ? 'grid grid-cols-1 xl:grid-cols-2 gap-6 items-start'
+                            : 'space-y-4'
+                        }
+                      >
+                        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 p-4 space-y-3">
+                          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2.5">
+                            <div className="flex items-center gap-2">
+                              <Eye className="w-4 h-4 text-indigo-600" />
+                              <span className="font-display font-bold text-xs sm:text-sm text-slate-900 dark:text-white">
+                                Original Uploaded {selectedMaterial.sourceType.toUpperCase()}: {selectedMaterial.title}
+                              </span>
+                            </div>
+                            {selectedMaterial.sourceRef && (
+                              <span className="text-[11px] font-mono text-slate-500 truncate max-w-[220px]">
+                                {selectedMaterial.sourceRef}
+                              </span>
+                            )}
+                          </div>
 
-                    {annotateMode && annotationTool === 'edit-text' ? (
-                      <div className="p-4 rounded-xl bg-indigo-50/60 dark:bg-slate-800 border border-indigo-200 space-y-3 relative z-20">
-                        <div className="text-xs font-bold text-[#4F46E5]">
-                          Direct Rich-Text &amp; KaTeX Editor (Supports **bold**, *italic*, $...$ and $$...$$)
-                        </div>
-                        <textarea
-                          rows={6}
-                          value={editingPageText}
-                          onChange={(e) => setEditingPageText(e.target.value)}
-                          placeholder="Edit extracted paragraphs and derivations..."
-                          className="w-full p-3 rounded-xl border border-slate-200 bg-white dark:bg-slate-900 text-xs font-mono leading-relaxed"
-                        />
-                        <textarea
-                          rows={3}
-                          value={editingFormulasText}
-                          onChange={(e) => setEditingFormulasText(e.target.value)}
-                          placeholder="One KaTeX formula block per line (e.g. $$E = mc^2$$)..."
-                          className="w-full p-3 rounded-xl border border-slate-200 bg-white dark:bg-slate-900 text-xs font-mono"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleSaveEditedPageNotes}
-                          className="px-4 py-2 rounded-xl bg-[#4F46E5] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Save className="w-3.5 h-3.5" />
-                          <span>Save Edited Page to Library</span>
-                        </button>
-                      </div>
-                    ) : (
-                      currentPageData.sections.map((sec, idx) => (
-                        <div key={idx} className="space-y-2.5">
-                          <h3 className="font-display font-bold text-sm sm:text-base text-slate-900 dark:text-white">
-                            <MathRichText content={sec.numberTitle} inline />
-                          </h3>
-                          {notesDensity === 'Full' &&
-                            sec.paragraphs?.map((p, pIdx) => (
-                              <div
-                                key={pIdx}
-                                className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 leading-relaxed"
-                              >
-                                <MathRichText content={p} />
-                              </div>
-                            ))}
-                          {sec.bullets && (
-                            <ul className="list-disc pl-5 space-y-1.5 text-xs sm:text-sm text-slate-700 dark:text-slate-200">
-                              {sec.bullets.map((b, bIdx) => (
-                                <li key={bIdx}>
-                                  <MathRichText content={b} inline />
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                          {sec.formulas && sec.formulas.length > 0 && (
-                            <div className="p-4 rounded-xl bg-indigo-50/50 dark:bg-slate-800/90 border border-indigo-200/80 dark:border-slate-700 space-y-2 text-xs sm:text-sm text-slate-900 dark:text-slate-100">
-                              {sec.formulas.map((f, fIdx) => (
-                                <div key={fIdx}>
-                                  <MathRichText content={f} />
+                          {/* Render Actual Video Player + 12-Hour Marathon Timestamp Chunks if YouTube */}
+                          {selectedMaterial.sourceType === 'youtube' && (() => {
+                            const rawUrl =
+                              selectedMaterial.originalFileUrl ||
+                              selectedMaterial.sourceRef ||
+                              '';
+                            const ytMatch = rawUrl.match(
+                              /(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{6,15})/
+                            );
+                            const videoId = ytMatch ? ytMatch[1] : null;
+                            const marathonChunks = parseOrGenerateMarathonTimestampChunks(
+                              selectedMaterial.contentSummary,
+                              6,
+                              selectedMaterial.chapter
+                            );
+                            const embedSrc = videoId
+                              ? `https://www.youtube.com/embed/${videoId}${
+                                  youtubeSeekSeconds > 0
+                                    ? `?start=${youtubeSeekSeconds}&autoplay=1`
+                                    : ''
+                                }`
+                              : '';
+                            return (
+                              <div className="space-y-3">
+                                {videoId ? (
+                                  <div className="aspect-video w-full rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shadow-md">
+                                    <iframe
+                                      key={`${videoId}-${youtubeSeekSeconds}`}
+                                      src={embedSrc}
+                                      title={selectedMaterial.title}
+                                      className="w-full h-full"
+                                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                      allowFullScreen
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="aspect-video w-full rounded-xl bg-slate-900 text-white p-6 flex flex-col items-center justify-center text-center space-y-2">
+                                    <Youtube className="w-10 h-10 text-rose-500" />
+                                    <div className="font-bold text-sm">{selectedMaterial.title}</div>
+                                    <p className="text-xs text-slate-300 max-w-md">
+                                      Video lecture source: {rawUrl || 'Uploaded YouTube Marathon Lecture'}
+                                    </p>
+                                  </div>
+                                )}
+
+                                {/* 12-Hour Marathon Interactive Timestamp Seeker */}
+                                <div className="p-3.5 rounded-xl bg-indigo-50/70 dark:bg-slate-900 border border-indigo-200/80 dark:border-slate-700 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-extrabold text-indigo-800 dark:text-indigo-300">
+                                      12-Hour Marathon Timestamp Chunks (Click to Seek Video &amp; Notes)
+                                    </span>
+                                    <span className="text-[11px] font-mono text-indigo-600">
+                                      {marathonChunks.length} Segments
+                                    </span>
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                                    {marathonChunks.map((chunk) => (
+                                      <button
+                                        key={chunk.id}
+                                        type="button"
+                                        onClick={() => {
+                                          setYoutubeSeekSeconds(chunk.seconds);
+                                          const targetIdx = Math.max(
+                                            0,
+                                            Math.min(pagesList.length - 1, chunk.pageNumber - 1)
+                                          );
+                                          setPageIdx(targetIdx);
+                                        }}
+                                        className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex items-start gap-2 ${
+                                          youtubeSeekSeconds === chunk.seconds
+                                            ? 'bg-indigo-600 text-white border-indigo-600'
+                                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-indigo-400'
+                                        }`}
+                                      >
+                                        <span
+                                          className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold shrink-0 ${
+                                            youtubeSeekSeconds === chunk.seconds
+                                              ? 'bg-white/20 text-white'
+                                              : 'bg-indigo-100 text-indigo-700'
+                                          }`}
+                                        >
+                                          {chunk.timestampLabel}
+                                        </span>
+                                        <span className="text-[11px] font-semibold line-clamp-1">
+                                          {chunk.topicTitle}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
                                 </div>
-                              ))}
+
+                                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs space-y-1.5 max-h-56 overflow-y-auto">
+                                  <div className="font-bold text-indigo-600">
+                                    Uploaded Lecture Transcript &amp; Timestamps:
+                                  </div>
+                                  <MathRichText content={selectedMaterial.contentSummary} />
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* Render Actual PDF Document Viewer if PDF */}
+                          {selectedMaterial.sourceType === 'pdf' && (
+                            <div className="space-y-3">
+                              {selectedMaterial.originalFileUrl &&
+                              (selectedMaterial.originalFileUrl.startsWith('data:application/pdf') ||
+                                selectedMaterial.originalFileUrl.startsWith('http') ||
+                                selectedMaterial.originalFileUrl.startsWith('blob:')) ? (
+                                <iframe
+                                  src={selectedMaterial.originalFileUrl}
+                                  title={`Original PDF: ${selectedMaterial.title}`}
+                                  className="w-full h-[460px] rounded-xl border border-slate-200 bg-white"
+                                />
+                              ) : null}
+                              <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2 max-h-[420px] overflow-y-auto">
+                                <div className="flex items-center justify-between text-xs font-bold text-indigo-600 border-b border-slate-100 pb-2">
+                                  <span>Original Uploaded PDF Document Content ({selectedMaterial.sourceRef || selectedMaterial.title})</span>
+                                  <span>Page {currentPageData.pageNumber}</span>
+                                </div>
+                                <div className="text-xs sm:text-sm text-slate-800 dark:text-slate-200 leading-relaxed">
+                                  <MathRichText content={selectedMaterial.contentSummary} />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Render Actual Uploaded Photo / Handwritten Scan if Photo */}
+                          {selectedMaterial.sourceType === 'photo' && (
+                            <div className="space-y-3">
+                              {selectedMaterial.originalFileUrl &&
+                              (selectedMaterial.originalFileUrl.startsWith('data:image') ||
+                                selectedMaterial.originalFileUrl.startsWith('http')) ? (
+                                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 flex justify-center">
+                                  <img
+                                    src={selectedMaterial.originalFileUrl}
+                                    alt={selectedMaterial.title}
+                                    className="max-h-[440px] w-auto object-contain rounded-lg"
+                                  />
+                                </div>
+                              ) : null}
+                              <div className="p-4 rounded-xl bg-amber-50/50 dark:bg-slate-900 border border-amber-200 space-y-2">
+                                <div className="text-xs font-bold text-amber-900 dark:text-amber-300">
+                                  Original Handwritten Scan Content ({selectedMaterial.sourceRef || selectedMaterial.title}):
+                                </div>
+                                <div className="text-xs sm:text-sm text-slate-800 dark:text-slate-200 leading-relaxed">
+                                  <MathRichText content={selectedMaterial.contentSummary} />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Render Original Uploaded Text / Drive Document */}
+                          {(selectedMaterial.sourceType === 'text' ||
+                            selectedMaterial.sourceType === 'drive') && (
+                            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2 max-h-[460px] overflow-y-auto">
+                              <div className="text-xs font-bold text-indigo-600">
+                                Original Uploaded Material ({selectedMaterial.sourceRef || selectedMaterial.title}):
+                              </div>
+                              <div className="text-xs sm:text-sm text-slate-800 dark:text-slate-200 leading-relaxed">
+                                <MathRichText content={selectedMaterial.contentSummary} />
+                              </div>
                             </div>
                           )}
                         </div>
-                      ))
+
+                        {/* Right Half of Split Screen: Exhaustive Detailed Notes */}
+                        {notesDensity === 'Split' && (
+                          <div className="space-y-4">
+                            <h2 className="font-display font-extrabold text-lg sm:text-xl text-slate-900 dark:text-white">
+                              <MathRichText content={currentPageData.heading} inline />
+                            </h2>
+                            {currentPageData.sections.map((sec, idx) => (
+                              <div
+                                key={idx}
+                                className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700 space-y-2.5"
+                              >
+                                <h3 className="font-display font-bold text-sm text-indigo-700 dark:text-indigo-300">
+                                  <MathRichText content={sec.numberTitle} inline />
+                                </h3>
+                                {sec.paragraphs?.map((p, pIdx) => (
+                                  <div
+                                    key={pIdx}
+                                    className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 leading-relaxed"
+                                  >
+                                    <MathRichText content={p} />
+                                  </div>
+                                ))}
+                                {sec.bullets && (
+                                  <ul className="list-disc pl-5 space-y-1.5 text-xs sm:text-sm text-slate-700 dark:text-slate-200">
+                                    {sec.bullets.map((b, bIdx) => (
+                                      <li key={bIdx}>
+                                        <MathRichText content={b} inline />
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                                {sec.formulas && sec.formulas.length > 0 && (
+                                  <div className="p-3.5 rounded-xl bg-indigo-50/60 dark:bg-slate-900 border border-indigo-200/80 space-y-2 text-xs sm:text-sm">
+                                    {sec.formulas.map((f, fIdx) => (
+                                      <div key={fIdx}>
+                                        <MathRichText content={f} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* FULL DETAILED NOTES OR QUICK NOTES VIEW */}
+                    {(notesDensity === 'Full' || notesDensity === 'Quick') && (
+                      <>
+                        <h2 className="font-display font-extrabold text-xl sm:text-2xl text-slate-900 dark:text-white">
+                          <MathRichText content={currentPageData.heading} inline />
+                        </h2>
+
+                        {annotateMode && annotationTool === 'edit-text' ? (
+                          <div className="p-4 rounded-xl bg-indigo-50/60 dark:bg-slate-800 border border-indigo-200 space-y-3 relative z-20">
+                            <div className="text-xs font-bold text-[#4F46E5]">
+                              Direct Rich-Text &amp; Equation Editor (Supports **bold**, *italic*, $...$ and $$...$$)
+                            </div>
+                            <textarea
+                              rows={6}
+                              value={editingPageText}
+                              onChange={(e) => setEditingPageText(e.target.value)}
+                              placeholder="Edit extracted paragraphs and derivations..."
+                              className="w-full p-3 rounded-xl border border-slate-200 bg-white dark:bg-slate-900 text-xs font-mono leading-relaxed"
+                            />
+                            <textarea
+                              rows={3}
+                              value={editingFormulasText}
+                              onChange={(e) => setEditingFormulasText(e.target.value)}
+                              placeholder="One equation block per line (e.g. $$E = mc^2$$)..."
+                              className="w-full p-3 rounded-xl border border-slate-200 bg-white dark:bg-slate-900 text-xs font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleSaveEditedPageNotes}
+                              className="px-4 py-2 rounded-xl bg-[#4F46E5] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                              <span>Save Edited Page to Library</span>
+                            </button>
+                          </div>
+                        ) : (
+                          currentPageData.sections.map((sec, idx) => (
+                            <div
+                              key={idx}
+                              className="p-4 sm:p-5 rounded-2xl bg-slate-50/60 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 space-y-3"
+                            >
+                              <h3 className="font-display font-bold text-sm sm:text-base text-indigo-700 dark:text-indigo-300">
+                                <MathRichText content={sec.numberTitle} inline />
+                              </h3>
+                              {notesDensity === 'Full' &&
+                                sec.paragraphs?.map((p, pIdx) => (
+                                  <div
+                                    key={pIdx}
+                                    className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 leading-relaxed"
+                                  >
+                                    <MathRichText content={p} />
+                                  </div>
+                                ))}
+                              {sec.bullets && (
+                                <ul className="list-disc pl-5 space-y-1.5 text-xs sm:text-sm text-slate-700 dark:text-slate-200">
+                                  {sec.bullets.map((b, bIdx) => (
+                                    <li key={bIdx}>
+                                      <MathRichText content={b} inline />
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                              {sec.formulas && sec.formulas.length > 0 && (
+                                <div className="p-4 rounded-xl bg-indigo-50/50 dark:bg-slate-800/90 border border-indigo-200/80 dark:border-slate-700 space-y-2 text-xs sm:text-sm text-slate-900 dark:text-slate-100">
+                                  {sec.formulas.map((f, fIdx) => (
+                                    <div key={fIdx}>
+                                      <MathRichText content={f} />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </>
                     )}
 
                     {/* Sticky Callout Notes added by student */}
@@ -2467,7 +3176,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                           type="text"
                           value={newCalloutText}
                           onChange={(e) => setNewCalloutText(e.target.value)}
-                          placeholder="Add sticky callout or KaTeX formula ($...$) to this page..."
+                          placeholder="Add sticky callout or equation ($...$) to this page..."
                           className="flex-1 px-3 py-1.5 rounded-lg border border-amber-300 bg-white text-xs"
                         />
                         <button
@@ -2510,17 +3219,14 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                   </div>
                 </div>
 
-                {/* Right AI Tutor Panel with 2-Way Context Toggle & One-Click "Create Visual" Button (5 Cols) */}
-                <div className="lg:col-span-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 flex flex-col justify-between space-y-4 shadow-2xs">
+                {/* Right AI Tutor Panel with 2-Way Context Toggle & One-Click "Create Visual" Button (4 Cols on wide screen) */}
+                <div className="lg:col-span-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 flex flex-col justify-between space-y-4 shadow-2xs">
                   <div className="space-y-4 flex-1 flex flex-col">
                     <div className="flex items-center justify-between">
                       <div>
                         <h2 className="font-display font-bold text-base text-slate-900 dark:text-white">
-                          AI Tutor (KaTeX + Visuals)
+                          AI Tutor
                         </h2>
-                        <p className="text-[11px] text-slate-500">
-                          Click “Create Visual” on any reply to generate 2D/3D/Image/Video
-                        </p>
                       </div>
                       <div className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 text-[11px] font-semibold">
                         {(['English', 'Hinglish'] as const).map((l) => (
@@ -2820,13 +3526,10 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
       )}
 
       {subTab === 'Create' && (
-        <div className="max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-5 space-y-5">
-          <div className="space-y-2">
-            <div className="text-xs text-slate-500">
-              Study / <span className="text-[#4F46E5] font-semibold">Create</span>
-            </div>
-            <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-slate-900 dark:text-white">
-              Create Visuals, 2D/3D Diagrams &amp; Animated Lessons
+        <div className="w-full px-6 lg:px-10 xl:px-12 py-5 space-y-5">
+          <div>
+            <h1 className="font-display font-extrabold text-2xl text-slate-900 dark:text-white">
+              Create Studio
             </h1>
           </div>
 
@@ -2858,26 +3561,120 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
           {createTab === 'Saved Library' ? (
             creations.length === 0 ? (
               <div className="p-10 rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 text-center text-xs text-slate-500">
-                No saved visuals yet. Generate a 2D/3D diagram or click “Create Visual” inside the AI
-                Tutor to save items here.
+                No saved visuals yet. Generate a 2D/3D diagram or click “Create Visual” in AI Tutor to save items here.
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {creations.map((item) => (
                   <div
                     key={item.id}
-                    className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3"
+                    className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3 flex flex-col justify-between shadow-2xs"
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="px-2.5 py-0.5 rounded-md bg-[#EEF2FF] text-[#4F46E5] text-[11px] font-bold uppercase">
-                        {item.type}
-                      </span>
-                      <span className="text-xs text-slate-400">{item.resolutionOrRatio}</span>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="px-2.5 py-0.5 rounded-md bg-[#EEF2FF] text-[#4F46E5] text-[11px] font-bold uppercase">
+                          {item.type}
+                        </span>
+                        <span className="text-xs text-slate-400">{item.resolutionOrRatio}</span>
+                      </div>
+
+                      {/* Live Visual Preview of Saved Creation */}
+                      <div className="h-44 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-center justify-center overflow-hidden p-2">
+                        {item.type === 'video' && item.assetData?.startsWith('data:video') ? (
+                          <video
+                            controls
+                            src={item.assetData}
+                            className="max-h-full max-w-full rounded-lg"
+                          />
+                        ) : item.type === 'visual' &&
+                          (item.assetData?.startsWith('data:image') ||
+                            item.assetData?.startsWith('http')) ? (
+                          <img
+                            src={item.assetData}
+                            alt={item.title}
+                            className="max-h-full max-w-full object-contain rounded-lg"
+                          />
+                        ) : item.assetData?.includes('<svg') ? (
+                          <div
+                            className="w-full h-full flex items-center justify-center overflow-hidden"
+                            dangerouslySetInnerHTML={{ __html: item.assetData }}
+                          />
+                        ) : (
+                          <div
+                            className="w-full h-full flex items-center justify-center overflow-hidden"
+                            dangerouslySetInnerHTML={{
+                              __html:
+                                DIAGRAM_SVG_PRESETS[
+                                  (item.preset as Preset3DId) || 'Incline'
+                                ] || DIAGRAM_SVG_PRESETS.Incline,
+                            }}
+                          />
+                        )}
+                      </div>
+
+                      <div>
+                        <h3 className="font-display font-bold text-sm text-slate-900 dark:text-white">
+                          {item.title}
+                        </h3>
+                        <p className="text-xs text-slate-500 line-clamp-2 mt-0.5">{item.prompt}</p>
+                      </div>
                     </div>
-                    <h3 className="font-display font-bold text-sm text-slate-900 dark:text-white">
-                      {item.title}
-                    </h3>
-                    <p className="text-xs text-slate-500 line-clamp-2">{item.prompt}</p>
+
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (item.preset) {
+                            setActivePreset(item.preset as Preset3DId);
+                          }
+                          setDiagramPrompt(item.prompt);
+                          if (item.type === '3d') {
+                            setRenderMode('3D Interactive');
+                            setCreateTab('Diagram Maker');
+                          } else if (item.type === 'visual') {
+                            if (item.assetData?.startsWith('data:image')) {
+                              setGeneratedImageUrl(item.assetData);
+                            }
+                            setCreateTab('Visual');
+                          } else if (item.type === 'video') {
+                            if (item.assetData?.startsWith('data:video')) {
+                              setGeneratedVideoUrl(item.assetData);
+                            }
+                            setCreateTab('Animated Lesson');
+                          } else {
+                            if (item.assetData?.includes('<svg')) {
+                              setCustomSvgHtml(item.assetData);
+                            }
+                            setRenderMode('2D SVG');
+                            setCreateTab('Diagram Maker');
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-[#EEF2FF] text-[#4F46E5] font-semibold hover:bg-indigo-100 cursor-pointer"
+                      >
+                        Open in Studio
+                      </button>
+
+                      {item.assetData?.includes('<svg') && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const blob = new Blob([item.assetData], {
+                              type: 'image/svg+xml;charset=utf-8',
+                            });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `${item.title.replace(/\s+/g, '_')}.svg`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-semibold hover:bg-slate-50 cursor-pointer inline-flex items-center gap-1"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          SVG
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -2915,6 +3712,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                     rows={3}
                     value={diagramPrompt}
                     onChange={(e) => setDiagramPrompt(e.target.value)}
+                    placeholder="Describe any JEE diagram, circuit, ray optics setup, or 3D geometry..."
                     className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs leading-relaxed"
                   />
                 </div>
@@ -2939,32 +3737,24 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
 
                 <button
                   type="button"
+                  disabled={diagramLoading || visualLoading || videoLoading}
                   onClick={() => {
                     if (createTab === 'Visual') {
                       handleGenerateVisual();
                     } else if (createTab === 'Animated Lesson') {
                       handleGenerateAnimatedVideo();
                     } else {
-                      const lower = diagramPrompt.toLowerCase();
-                      if (lower.includes('lens') || lower.includes('optic')) {
-                        setActivePreset('Convex Lens');
-                      } else if (lower.includes('circuit') || lower.includes('rc')) {
-                        setActivePreset('RC Circuit');
-                      } else if (lower.includes('vsepr') || lower.includes('octahedral')) {
-                        setActivePreset('VSEPR');
-                      } else if (lower.includes('parabola')) {
-                        setActivePreset('Parabola');
-                      } else if (lower.includes('ellipse')) {
-                        setActivePreset('Ellipse');
-                      } else {
-                        setActivePreset('Incline');
-                      }
+                      handleGenerateDiagramSvg();
                     }
                   }}
-                  className="w-full py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                  className="w-full py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] disabled:opacity-60 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Generate</span>
+                  <span>
+                    {diagramLoading || visualLoading || videoLoading
+                      ? 'Generating...'
+                      : 'Generate'}
+                  </span>
                 </button>
 
                 <div>
@@ -2987,6 +3777,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                         type="button"
                         onClick={() => {
                           setActivePreset(preset);
+                          setCustomSvgHtml(null);
                           setDiagramPrompt(
                             preset === 'Incline'
                               ? 'Free-body diagram of a block on an inclined plane, show gravity mg, normal N, and friction.'
@@ -2994,7 +3785,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                           );
                         }}
                         className={`px-2 py-2 rounded-xl text-[11px] font-semibold border transition-colors cursor-pointer ${
-                          activePreset === preset
+                          activePreset === preset && !customSvgHtml
                             ? 'bg-[#EEF2FF] text-[#4F46E5] border-indigo-300'
                             : 'border-slate-200 text-slate-700 hover:bg-slate-50'
                         }`}
@@ -3071,21 +3862,132 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                     </div>
 
                     {renderMode === '2D SVG' ? (
-                      <div className="w-full h-[420px] rounded-xl border border-slate-100 bg-white flex items-center justify-center overflow-hidden p-4 relative">
-                        {animateDiagramMotion && (
-                          <span className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-emerald-100 text-emerald-800 text-[11px] font-bold">
-                            Physics Harmonic Motion Active
-                          </span>
-                        )}
+                      <div className="space-y-2.5">
                         <div
-                          className={`w-full h-full flex items-center justify-center transition-transform ${
-                            animateDiagramMotion ? 'animate-pulse' : ''
-                          }`}
-                          style={{ transform: `scale(${diagramZoom / 100})` }}
-                          dangerouslySetInnerHTML={{
-                            __html: DIAGRAM_SVG_PRESETS[activePreset],
+                          ref={svgStageRef}
+                          onMouseMove={(e) => {
+                            if (!draggingVectorId || !svgStageRef.current) return;
+                            const rect = svgStageRef.current.getBoundingClientRect();
+                            const xPct = Math.max(
+                              6,
+                              Math.min(92, Number((((e.clientX - rect.left) / rect.width) * 100).toFixed(1)))
+                            );
+                            const yPct = Math.max(
+                              8,
+                              Math.min(90, Number((((e.clientY - rect.top) / rect.height) * 100).toFixed(1)))
+                            );
+                            setDiagramVectors((prev) =>
+                              prev.map((v) =>
+                                v.id === draggingVectorId ? { ...v, xPct, yPct } : v
+                              )
+                            );
                           }}
-                        />
+                          onMouseUp={() => setDraggingVectorId(null)}
+                          onMouseLeave={() => setDraggingVectorId(null)}
+                          className="w-full h-[420px] rounded-xl border border-slate-100 bg-white flex items-center justify-center overflow-hidden p-4 relative select-none"
+                        >
+                          {diagramLoading && (
+                            <span className="absolute top-3 right-3 px-2.5 py-1 rounded-md bg-indigo-50 text-[#4F46E5] text-[11px] font-bold animate-pulse z-20">
+                              Synthesizing Custom SVG...
+                            </span>
+                          )}
+                          <span className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-slate-900/80 text-white text-[10px] font-bold z-20">
+                            Drag any vector/label below to reposition on diagram
+                          </span>
+                          <div
+                            className={`w-full h-full flex items-center justify-center transition-transform ${
+                              animateDiagramMotion ? 'animate-pulse' : ''
+                            }`}
+                            style={{ transform: `scale(${diagramZoom / 100})` }}
+                            dangerouslySetInnerHTML={{
+                              __html: customSvgHtml || DIAGRAM_SVG_PRESETS[activePreset],
+                            }}
+                          />
+
+                          {/* Interactive Draggable Vector & Label Handles */}
+                          {diagramVectors.map((vec) => (
+                            <div
+                              key={vec.id}
+                              onMouseDown={(e) => {
+                                e.stopPropagation();
+                                setDraggingVectorId(vec.id);
+                              }}
+                              style={{
+                                left: `${vec.xPct}%`,
+                                top: `${vec.yPct}%`,
+                                borderColor: vec.color,
+                                color: vec.color,
+                              }}
+                              className={`absolute -translate-x-1/2 -translate-y-1/2 z-20 px-2.5 py-1 rounded-full bg-white/95 border-2 shadow-md text-[11px] font-extrabold flex items-center gap-1.5 cursor-grab active:cursor-grabbing transition-shadow ${
+                                draggingVectorId === vec.id ? 'ring-4 ring-indigo-500/30 scale-105' : ''
+                              }`}
+                            >
+                              <span
+                                className="w-2 h-2 rounded-full inline-block"
+                                style={{ backgroundColor: vec.color }}
+                              />
+                              <span>↗ {vec.label}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDiagramVectors((prev) =>
+                                    prev.filter((item) => item.id !== vec.id)
+                                  );
+                                }}
+                                className="ml-1 text-slate-400 hover:text-rose-600 text-[10px] cursor-pointer"
+                                title="Remove vector label"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Add Custom Draggable Vector / Label Bar */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs">
+                          <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+                            <input
+                              type="text"
+                              value={newVectorLabel}
+                              onChange={(e) => setNewVectorLabel(e.target.value)}
+                              placeholder="Add draggable vector/label (e.g. T_1, E_net, v_cm)..."
+                              className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-medium"
+                            />
+                            <input
+                              type="color"
+                              value={newVectorColor}
+                              onChange={(e) => setNewVectorColor(e.target.value)}
+                              className="w-7 h-7 rounded cursor-pointer border border-slate-200"
+                              title="Vector Color"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!newVectorLabel.trim()) return;
+                                setDiagramVectors((prev) => [
+                                  ...prev,
+                                  {
+                                    id: `vec-${Date.now()}`,
+                                    label: newVectorLabel.trim(),
+                                    xPct: 50,
+                                    yPct: 50,
+                                    dx: 28,
+                                    dy: -28,
+                                    color: newVectorColor,
+                                  },
+                                ]);
+                                setNewVectorLabel('');
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-[#4F46E5] hover:bg-[#4338CA] text-white font-bold text-xs cursor-pointer"
+                            >
+                              + Add Vector / Label
+                            </button>
+                          </div>
+                          <span className="text-[11px] text-slate-500 font-semibold">
+                            {diagramVectors.length} Interactive Vectors Active
+                          </span>
+                        </div>
                       </div>
                     ) : (
                       <ThreeSceneCanvas
@@ -3112,7 +4014,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                       >
                         <Play className="w-3.5 h-3.5" />
                         <span>
-                          {animateDiagramMotion ? 'Stop 3D Physics Motion' : 'Animate 3D Motion'}
+                          {animateDiagramMotion ? 'Stop 3D Motion' : 'Animate 3D Motion'}
                         </span>
                       </button>
                     </div>
@@ -3132,7 +4034,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                               : 'text-slate-600'
                           }`}
                         >
-                          Gemini 3 Pro Image (1K / 2K / 4K)
+                          Pro Image (1K / 2K / 4K)
                         </button>
                         <button
                           type="button"
@@ -3143,7 +4045,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                               : 'text-slate-600'
                           }`}
                         >
-                          Nano Banana 2.1 (Image Edit)
+                          Image Edit
                         </button>
                       </div>
 
@@ -3169,9 +4071,9 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
 
                     {visualEngine === 'nano' && (
                       <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-                        <span>Optional base image to edit with Nano Banana 2.1:</span>
+                        <span>Reference image to edit (optional):</span>
                         <label className="px-3 py-1 rounded-lg bg-white border border-slate-200 font-semibold cursor-pointer">
-                          Upload Reference Image
+                          Upload Image
                           <input
                             type="file"
                             accept="image/*"
@@ -3192,11 +4094,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                     <div className="h-[360px] rounded-xl border border-slate-100 bg-slate-50 flex flex-col items-center justify-center p-4 overflow-hidden">
                       {visualLoading ? (
                         <p className="text-xs font-semibold text-[#4F46E5] animate-pulse">
-                          Generating{' '}
-                          {visualEngine === 'pro'
-                            ? `${imageSize} Pro Visual`
-                            : 'Nano Banana 2.1 Visual'}
-                          ...
+                          Generating {imageSize} Visual...
                         </p>
                       ) : generatedImageUrl ? (
                         <img
@@ -3208,13 +4106,16 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                         <div className="text-center space-y-2 max-w-sm">
                           <ImageIcon className="w-8 h-8 text-[#4F46E5] mx-auto" />
                           <p className="text-xs text-slate-600">
-                            Click <strong>Generate</strong> on the left panel to synthesize a
-                            high-resolution {imageSize} JEE concept diagram.
+                            Click <strong>Generate</strong> on the left panel to create a {imageSize} concept diagram.
                           </p>
                         </div>
                       )}
                     </div>
-                    {visualError && <p className="text-xs text-red-600">{visualError}</p>}
+                    {visualError && (
+                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                        {visualError}
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -3222,7 +4123,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                   <div className="space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100 text-xs">
                       <span className="font-bold text-slate-800">
-                        Omni Flash Video Generator (gemini-omni-1.2-flash)
+                        Animated Concept Video
                       </span>
                       <div className="flex items-center gap-1.5">
                         {(['16:9', '9:16'] as const).map((ratio) => (
@@ -3245,7 +4146,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                     <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
                       <span>Animate a static diagram photo (optional):</span>
                       <label className="px-3 py-1 rounded-lg bg-white border border-slate-200 font-semibold cursor-pointer">
-                        Upload Photo to Animate
+                        Upload Photo
                         <input
                           type="file"
                           accept="image/*"
@@ -3262,10 +4163,10 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                       </label>
                     </div>
 
-                    <div className="h-[340px] rounded-xl border border-slate-100 bg-slate-50 flex items-center justify-center p-4">
+                    <div className="h-[340px] rounded-xl border border-slate-100 bg-slate-50 flex items-center justify-center p-4 overflow-hidden">
                       {videoLoading ? (
                         <p className="text-xs font-semibold text-[#4F46E5] animate-pulse">
-                          Generating {videoAspectRatio} Animated Lesson with Gemini Omni 1.2 Flash...
+                          Generating {videoAspectRatio} Animated Lesson...
                         </p>
                       ) : generatedVideoUrl ? (
                         <video
@@ -3273,17 +4174,24 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                           src={generatedVideoUrl}
                           className="max-h-full max-w-full rounded-lg"
                         />
+                      ) : animateDiagramMotion ? (
+                        <div className="w-full h-full">
+                          <ThreeSceneCanvas preset={activePreset} animateMotion={true} />
+                        </div>
                       ) : (
                         <div className="text-center space-y-2 max-w-sm">
                           <Video className="w-8 h-8 text-[#4F46E5] mx-auto" />
                           <p className="text-xs text-slate-600">
-                            Click <strong>Generate</strong> on the left panel to render a{' '}
-                            {videoAspectRatio} animated physics or chemistry video lesson.
+                            Click <strong>Generate</strong> on the left panel to render an animated lesson.
                           </p>
                         </div>
                       )}
                     </div>
-                    {videoError && <p className="text-xs text-red-600">{videoError}</p>}
+                    {videoError && (
+                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                        {videoError}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -3323,7 +4231,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
       )}
 
       {subTab === 'Resources' && (
-        <div className="max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-5 space-y-6">
+        <div className="w-full px-6 lg:px-10 xl:px-12 py-5 space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <div className="text-[11px] font-bold tracking-wider uppercase text-[#4F46E5]">
@@ -3555,7 +4463,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
               <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xs">
                 <div className="flex items-center justify-between">
                   <h2 className="font-display font-bold text-base text-slate-900 dark:text-white">
-                    Quick KaTeX Formula Sheets
+                    Quick Formula Sheets
                   </h2>
                   <div className="flex items-center gap-1 text-xs">
                     {(['Physics', 'Chemistry', 'Mathematics'] as const).map((subj) => (

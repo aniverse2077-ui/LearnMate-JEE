@@ -5,16 +5,34 @@ export type QuestionStatus =
   | 'marked'
   | 'answered_marked';
 
-export type AdvancedQuestionFormat = 'single' | 'multiple' | 'numerical' | 'matrix';
+export type AdvancedQuestionFormat =
+  | 'single'
+  | 'multiple'
+  | 'numerical'
+  | 'matrix'
+  | 'paragraph';
+
+export type ErrorRootCauseTag =
+  | 'Conceptual Gap'
+  | 'Formula Forgotten'
+  | 'Calculation/Silly Error'
+  | 'Misread Question'
+  | 'Time Pressure';
+
+export type ExamTrack = 'JEE Main' | 'JEE Advanced' | 'NEET UG' | 'BITSAT';
 
 export interface CBTQuestion {
   id: string;
   number: number;
   subject: 'Physics' | 'Chemistry' | 'Mathematics';
+  subTrackLabel?: 'Biology (Botany & Zoology)' | 'English & Logical Reasoning';
   section: 'Section A' | 'Section B';
   chapter: string;
   stem: string;
   stemHindi?: string;
+  paragraphContext?: string;
+  matrixListI?: string[];
+  matrixListII?: string[];
   options: string[];
   optionsHindi?: string[];
   correctIndex: number;
@@ -22,9 +40,10 @@ export interface CBTQuestion {
   numericalAnswer?: number;
   explanation: string;
   difficultyBucket?: 'Beginner' | 'Must-Do' | 'Advanced Climb';
-  examType?: 'JEE Main' | 'JEE Advanced';
+  examType?: ExamTrack;
   advancedFormat?: AdvancedQuestionFormat;
   pyqTag?: string;
+  conceptTags?: string[];
 }
 
 export interface QuestionResponseState {
@@ -70,14 +89,14 @@ export interface CBTSummaryMetrics {
 
 /**
  * Evaluates a single question under either:
- * - Official 2025/2026 NTA JEE Main rules:
- *   Section A (MCQ): +4 correct, -1 wrong, 0 unattempted
- *   Section B (Compulsory Numerical Value): +4 correct, 0 wrong (NO negative marking), 0 unattempted
+ * - Official NTA JEE Main 2026/2027 Paper 1 rules:
+ *   Section A (20 Single-Choice MCQs): +4 correct, -1 wrong, 0 unattempted
+ *   Section B (5 Compulsory Numerical-Value Questions): +4 correct, -1 wrong, 0 unattempted
  * - JEE Advanced Paper 1 & 2 rules:
- *   Single Choice: +3 correct, -1 wrong
- *   Multiple Choice (One or More than One Correct): +4 all correct, -2 any wrong chosen, +1 per correct option if no wrong chosen
- *   Numerical: +4 correct, 0 wrong
- *   Matrix Match: +3 correct, -1 wrong
+ *   Single Choice / Paragraph / Matrix-Match: +3 correct, -1 wrong
+ *   Multiple Choice (One or More than One Correct): +4 all correct, -2 any wrong chosen,
+ *     +3 for 3 of 4 correct, +2 for 2 of 3+ correct, +1 for 1 of 2+ correct if zero wrong chosen
+ *   Non-Negative Integer Numerical: +4 correct, 0 wrong
  */
 export function evaluateSingleQuestionMarks(
   q: CBTQuestion,
@@ -91,9 +110,14 @@ export function evaluateSingleQuestionMarks(
   correctAnswerLabel: string;
 } {
   const isAdvanced = q.examType === 'JEE Advanced';
+  const isBitsat = q.examType === 'BITSAT';
   const format: AdvancedQuestionFormat =
     q.advancedFormat || (q.section === 'Section B' ? 'numerical' : 'single');
-  const maxMarks = isAdvanced && (format === 'single' || format === 'matrix') ? 3 : 4;
+  const maxMarks = isBitsat
+    ? 3
+    : isAdvanced && (format === 'single' || format === 'matrix' || format === 'paragraph')
+    ? 3
+    : 4;
 
   const isStatusEvaluated =
     r && (r.status === 'answered' || r.status === 'answered_marked');
@@ -119,17 +143,21 @@ export function evaluateSingleQuestionMarks(
     let isCorrect = false;
     let userLabel = rawVal;
     if (hasNum && q.numericalAnswer !== undefined) {
-      isCorrect = Math.abs(Number(rawVal) - q.numericalAnswer) <= 0.05;
+      const parsedUser = Number(rawVal);
+      isCorrect =
+        Math.round(parsedUser) === Math.round(q.numericalAnswer) ||
+        Math.abs(parsedUser - q.numericalAnswer) <= 0.05;
     } else if (hasOptFallback) {
       isCorrect = r!.selectedOption === q.correctIndex;
       userLabel = q.options[r!.selectedOption!] || `Option ${r!.selectedOption! + 1}`;
     }
 
-    // Per 2025/2026 NTA JEE Main & JEE Advanced numerical rules: +4 for correct, 0 for incorrect (no negative marking)
+    // JEE Main Section B: +4 correct, -1 wrong; JEE Advanced Non-Negative Integer: +4 correct, 0 wrong
+    const wrongPenalty = isAdvanced ? 0 : -1;
     return {
       isAttempted: true,
       isCorrect,
-      marksAwarded: isCorrect ? 4 : 0,
+      marksAwarded: isCorrect ? 4 : wrongPenalty,
       maxMarks: 4,
       userAnswerLabel: userLabel,
       correctAnswerLabel: String(q.numericalAnswer ?? q.options[q.correctIndex] ?? ''),
@@ -767,40 +795,380 @@ export function formatCountdownTimer(seconds: number): string {
   ).padStart(2, '0')}`;
 }
 
+export interface SM2FlashcardItem {
+  id: string;
+  subject: 'Physics' | 'Chemistry' | 'Mathematics';
+  chapter: string;
+  frontPrompt: string;
+  backAnswer: string;
+  intervalDays: number;
+  repetitionCount: number;
+  easeFactor: number;
+  nextReviewIso: string;
+  rootCauseTag?: ErrorRootCauseTag;
+}
+
+export interface SM2CardSchedule {
+  interval: number;
+  repetition: number;
+  efactor: number;
+  nextReviewDate: string;
+  intervalDays: number;
+  repetitionCount: number;
+  easeFactor: number;
+  nextReviewIso: string;
+}
+
+/**
+ * Authentic SuperMemo SM-2 spaced repetition algorithm.
+ * Quality scale: 0..5 (Again=1, Hard=3, Good=4, Easy=5).
+ */
+export function calculateSM2Schedule(
+  paramsOrCard:
+    | {
+        quality: 0 | 1 | 2 | 3 | 4 | 5;
+        repetition: number;
+        interval: number;
+        efactor: number;
+        nowMs?: number;
+      }
+    | {
+        intervalDays: number;
+        repetitionCount: number;
+        easeFactor: number;
+      },
+  qualityArg?: 0 | 1 | 2 | 3 | 4 | 5
+): SM2CardSchedule {
+  const quality =
+    'quality' in paramsOrCard ? paramsOrCard.quality : (qualityArg ?? 4);
+  const repetition =
+    'repetition' in paramsOrCard
+      ? paramsOrCard.repetition
+      : paramsOrCard.repetitionCount;
+  const interval =
+    'interval' in paramsOrCard
+      ? paramsOrCard.interval
+      : paramsOrCard.intervalDays;
+  const efactor =
+    'efactor' in paramsOrCard
+      ? paramsOrCard.efactor
+      : paramsOrCard.easeFactor;
+  const nowMs =
+    'nowMs' in paramsOrCard && paramsOrCard.nowMs ? paramsOrCard.nowMs : Date.now();
+
+  let nextRepetition = repetition;
+  let nextInterval = interval;
+
+  if (quality < 3) {
+    nextRepetition = 0;
+    nextInterval = 1;
+  } else {
+    if (repetition === 0) {
+      nextInterval = 1;
+    } else if (repetition === 1) {
+      nextInterval = 6;
+    } else {
+      nextInterval = Math.max(1, Math.round(interval * efactor));
+    }
+    nextRepetition = repetition + 1;
+  }
+
+  const rawEf = efactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
+  const nextEfactor = Number(Math.max(1.3, Math.min(3.2, rawEf)).toFixed(2));
+  const nextDate = new Date(nowMs + nextInterval * 24 * 60 * 60 * 1000).toISOString();
+
+  return {
+    interval: nextInterval,
+    repetition: nextRepetition,
+    efactor: nextEfactor,
+    nextReviewDate: nextDate,
+    intervalDays: nextInterval,
+    repetitionCount: nextRepetition,
+    easeFactor: nextEfactor,
+    nextReviewIso: nextDate,
+  };
+}
+
 export function calculateNextSRSReview(
   rating: 'Again' | 'Hard' | 'Good' | 'Easy',
   intervalDays: number,
-  easeFactor: number
-): { nextIntervalDays: number; nextEaseFactor: number; label: string } {
-  if (rating === 'Again') {
-    return {
-      nextIntervalDays: 1,
-      nextEaseFactor: Math.max(1.3, easeFactor - 0.2),
-      label: '< 10 mins (Reset to 1d)',
-    };
-  }
-  if (rating === 'Hard') {
-    const nextInt = Math.max(1, Math.round(intervalDays * 1.2));
-    return {
-      nextIntervalDays: nextInt,
-      nextEaseFactor: Math.max(1.3, easeFactor - 0.15),
-      label: `${nextInt} day(s)`,
-    };
-  }
-  if (rating === 'Good') {
-    const nextInt = Math.max(2, Math.round(intervalDays * easeFactor));
-    return {
-      nextIntervalDays: nextInt,
-      nextEaseFactor: easeFactor,
-      label: `${nextInt} days`,
-    };
-  }
-  const nextInt = Math.max(4, Math.round(intervalDays * easeFactor * 1.3));
-  return {
-    nextIntervalDays: nextInt,
-    nextEaseFactor: Math.min(3.0, easeFactor + 0.15),
-    label: `${nextInt} days`,
+  easeFactor: number,
+  repetition = 1
+): { nextIntervalDays: number; nextEaseFactor: number; nextRepetition: number; label: string } {
+  const qualityMap: Record<'Again' | 'Hard' | 'Good' | 'Easy', 1 | 3 | 4 | 5> = {
+    Again: 1,
+    Hard: 3,
+    Good: 4,
+    Easy: 5,
   };
+  const sm2 = calculateSM2Schedule({
+    quality: qualityMap[rating],
+    repetition: rating === 'Again' ? 0 : repetition,
+    interval: intervalDays,
+    efactor: easeFactor,
+  });
+  return {
+    nextIntervalDays: sm2.interval,
+    nextEaseFactor: sm2.efactor,
+    nextRepetition: sm2.repetition,
+    label: rating === 'Again' ? '< 10 mins (Reset to 1d)' : `${sm2.interval} day(s)`,
+  };
+}
+
+export interface ShiftPercentilePrediction {
+  percentile: number;
+  predictedAirMin: number;
+  predictedAirMax: number;
+  cutoffCleared: boolean;
+  targetInstituteTier: string;
+  normalizedMarksOutOf300: number;
+}
+
+/**
+ * Quizrr / MathonGo-style Shift-Difficulty Normalization & NTA Percentile / AIR Predictor.
+ */
+export function predictNtaPercentileAndAir(params: {
+  score: number;
+  maxScore: number;
+  shiftDifficulty?: 'Easy' | 'Moderate' | 'Tough';
+  totalCandidates?: number;
+}): ShiftPercentilePrediction {
+  const {
+    score,
+    maxScore,
+    shiftDifficulty = 'Moderate',
+    totalCandidates = 1420000,
+  } = params;
+
+  const safeMax = Math.max(1, maxScore);
+  const rawNormalized300 = Math.max(-75, Math.min(300, Math.round((score / safeMax) * 300)));
+
+  // Shift difficulty adjustment (+14 marks equivalent for Tough shift, -12 for Easy shift)
+  const shiftBonus = shiftDifficulty === 'Tough' ? 14 : shiftDifficulty === 'Easy' ? -12 : 0;
+  const effectiveScore = Math.max(0, Math.min(300, rawNormalized300 + shiftBonus));
+
+  let percentile = 50;
+  if (effectiveScore >= 280) {
+    percentile = 99.98 + ((effectiveScore - 280) / 20) * 0.019;
+  } else if (effectiveScore >= 240) {
+    percentile = 99.8 + ((effectiveScore - 240) / 40) * 0.18;
+  } else if (effectiveScore >= 200) {
+    percentile = 99.2 + ((effectiveScore - 200) / 40) * 0.6;
+  } else if (effectiveScore >= 170) {
+    percentile = 98.0 + ((effectiveScore - 170) / 30) * 1.2;
+  } else if (effectiveScore >= 140) {
+    percentile = 95.5 + ((effectiveScore - 140) / 30) * 2.5;
+  } else if (effectiveScore >= 110) {
+    percentile = 91.0 + ((effectiveScore - 110) / 30) * 4.5;
+  } else if (effectiveScore >= 80) {
+    percentile = 82.0 + ((effectiveScore - 80) / 30) * 9.0;
+  } else {
+    percentile = Math.max(12.0, (effectiveScore / 80) * 82.0);
+  }
+
+  const roundedPercentile = Number(Math.min(99.999, percentile).toFixed(4));
+  const rawRank = Math.max(1, Math.round(((100 - roundedPercentile) / 100) * totalCandidates));
+  const predictedAirMin = Math.max(1, Math.round(rawRank * 0.88));
+  const predictedAirMax = Math.max(predictedAirMin + 15, Math.round(rawRank * 1.12));
+  const cutoffCleared = roundedPercentile >= 93.2;
+
+  const targetInstituteTier =
+    roundedPercentile >= 99.6
+      ? 'Top 5 NITs (Trichy, Surathkal, Warangal) CSE & IIIT-H'
+      : roundedPercentile >= 98.5
+      ? 'Top 10 NITs & IIITs Core / Circuital Branches'
+      : roundedPercentile >= 95.0
+      ? 'NITs / IIITs / GFTIs & Qualified for JEE Advanced'
+      : roundedPercentile >= 93.2
+      ? 'JEE Advanced Cutoff Cleared — Push +35 Marks for NIT Seat'
+      : 'Below General Cutoff — Focus on High-Weightage Chapters & Mistake Book';
+
+  return {
+    percentile: roundedPercentile,
+    predictedAirMin,
+    predictedAirMax,
+    cutoffCleared,
+    targetInstituteTier,
+    normalizedMarksOutOf300: rawNormalized300,
+  };
+}
+
+export interface ChapterShardTask {
+  id: string;
+  shardNumber: number;
+  title: string;
+  durationMinutes: number;
+  focusConcept: string;
+  formulaHook: string;
+  masteryQuestions: {
+    id: string;
+    prompt: string;
+    options: string[];
+    correctIndex: number;
+    explanation: string;
+  }[];
+}
+
+/**
+ * Generates 15-Minute "ShardZ" active-recall micro-tasks with a 3-question mastery check per shard.
+ */
+export function generateChapterShardZ(
+  chapter: string,
+  subject: 'Physics' | 'Chemistry' | 'Mathematics'
+): ChapterShardTask[] {
+  return [
+    {
+      id: `shard-${chapter}-1`,
+      shardNumber: 1,
+      title: `ShardZ #1: First Principles & Governing Law of ${chapter}`,
+      durationMinutes: 15,
+      focusConcept: `Master the fundamental conservation laws, standard SI units, and sign conventions in ${chapter}.`,
+      formulaHook:
+        subject === 'Physics'
+          ? '$$\\vec{F}_{\\text{net}} = \\frac{d\\vec{p}}{dt}, \\quad W_{\\text{all}} = \\Delta K$$'
+          : subject === 'Chemistry'
+          ? '$$\\Delta G^\\circ = -nFE^\\circ_{\\text{cell}} = -2.303\\,RT\\log_{10} K_{\\text{eq}}$$'
+          : '$$\\int_a^b f(x)\\,dx = \\int_a^b f(a+b-x)\\,dx$$',
+      masteryQuestions: [
+        {
+          id: `sq-${chapter}-1-1`,
+          prompt: `Before applying any shortcut formula in ${chapter}, which condition must be verified first?`,
+          options: [
+            'Domain validity, reference frame, and standard SI units',
+            'Numerical approximation of constants to 1 significant figure',
+            'Ignoring boundary conditions',
+            'Skipping dimensional homogeneity',
+          ],
+          correctIndex: 0,
+          explanation:
+            'Every JEE Main & Advanced formula requires checking frame validity, boundary conditions, and SI units first.',
+        },
+        {
+          id: `sq-${chapter}-1-2`,
+          prompt: `In dimensional verification of an equation in ${chapter}, the arguments of exponential or logarithmic terms must be:`,
+          options: [
+            'Strictly dimensionless ($[M^0L^0T^0]$)',
+            'Proportional to mass $[M^1]$',
+            'In CGS units only',
+            'Dependent on time $[T^1]$',
+          ],
+          correctIndex: 0,
+          explanation:
+            'Transcendental functions ($\\exp, \\ln, \\sin, \\cos$) require dimensionless arguments ($[M^0L^0T^0]$).',
+        },
+        {
+          id: `sq-${chapter}-1-3`,
+          prompt: `When converting natural logarithm $\\ln(x)$ to base-10 logarithm $\\log_{10}(x)$ in ${chapter}, multiply by:`,
+          options: ['$2.303$', '$0.693$', '$1.414$', '$3.141$'],
+          correctIndex: 0,
+          explanation: '$\\ln(x) = \\ln(10)\\,\\log_{10}(x) \\approx 2.303\\,\\log_{10}(x)$.',
+        },
+      ],
+    },
+    {
+      id: `shard-${chapter}-2`,
+      shardNumber: 2,
+      title: `ShardZ #2: Step-by-Step Numerical Solver & Limiting Cases`,
+      durationMinutes: 15,
+      focusConcept: `Apply symbolic simplification and limiting-case analysis ($x \\to 0, x \\to \\infty$) to solve Section A & B problems.`,
+      formulaHook:
+        subject === 'Physics'
+          ? '$$I = I_{\\text{cm}} + Md^2, \\quad \\tau_{\\text{ext}} = I\\alpha$$'
+          : subject === 'Chemistry'
+          ? '$$k = A e^{-E_a/RT}, \\quad t_{1/2} = \\frac{0.693}{k}$$'
+          : '$$|\\text{adj}(A)| = |A|^{n-1}, \\quad A^{-1} = \\frac{\\text{adj}(A)}{|A|}$$',
+      masteryQuestions: [
+        {
+          id: `sq-${chapter}-2-1`,
+          prompt: `Why should you simplify expressions symbolically before plugging in decimals in Section B numericals?`,
+          options: [
+            'Prevents premature rounding errors and cancels common factors cleanly',
+            'Increases calculation time',
+            'Changes the physical units',
+            'Eliminates the need to read the question',
+          ],
+          correctIndex: 0,
+          explanation:
+            'Symbolic simplification prevents rounding drift in compulsory Section B numerical-value questions (+4/-1).',
+        },
+        {
+          id: `sq-${chapter}-2-2`,
+          prompt: `Under the NTA JEE Main 2026/2027 Paper 1 rules, what is the marking scheme for Compulsory Section B Numerical questions?`,
+          options: [
+            '+4 for correct, -1 for wrong, 0 for unattempted',
+            '+4 for correct, 0 for wrong',
+            '+2 for correct, -0.5 for wrong',
+            '+3 for correct, -1 for wrong',
+          ],
+          correctIndex: 0,
+          explanation:
+            'Both Section A (20 MCQs) and Section B (5 Compulsory Numericals) carry +4 for correct and -1 for wrong in NTA JEE Main.',
+        },
+        {
+          id: `sq-${chapter}-2-3`,
+          prompt: `How can you eliminate distractor options rapidly in a complex ${chapter} MCQ?`,
+          options: [
+            'Check dimensional consistency and extreme limiting cases ($0$ or $\\infty$)',
+            'Guess the longest option',
+            'Always pick Option C',
+            'Skip reading the stem',
+          ],
+          correctIndex: 0,
+          explanation:
+            'Limiting-case checks and dimensional homogeneity frequently eliminate 2 to 3 wrong options in under 20 seconds.',
+        },
+      ],
+    },
+    {
+      id: `shard-${chapter}-3`,
+      shardNumber: 3,
+      title: `ShardZ #3: JEE Advanced Exceptions, Edge Cases & Trap Defense`,
+      durationMinutes: 15,
+      focusConcept: `Spot non-ideal regimes, discontinuous boundaries, and multi-correct partial marking traps in ${chapter}.`,
+      formulaHook:
+        subject === 'Physics'
+          ? '$$K_{\\text{rolling}} = \\frac{1}{2}Mv_{\\text{cm}}^2\\left(1 + \\frac{k^2}{R^2}\\right)$$'
+          : subject === 'Chemistry'
+          ? '$$\\mu_{\\text{spin}} = \\sqrt{n(n+2)}\\text{ BM}, \\quad Z = \\frac{PV}{nRT}$$'
+          : '$$|\\vec{a}\\times\\vec{b}|^2 + (\\vec{a}\\cdot\\vec{b})^2 = |\\vec{a}|^2|\\vec{b}|^2$$',
+      masteryQuestions: [
+        {
+          id: `sq-${chapter}-3-1`,
+          prompt: `In a JEE Advanced Multiple-Correct question (+4 / -2) where 3 options (A, B, C) are correct, what score do you get if you select only A and B?`,
+          options: ['+2 partial marks', '+4 marks', '-2 marks', '0 marks'],
+          correctIndex: 0,
+          explanation:
+            'When zero wrong options are selected, JEE Advanced awards +1 partial mark per correct option chosen (+2 for 2 correct options).',
+        },
+        {
+          id: `sq-${chapter}-3-2`,
+          prompt: `What happens in a JEE Advanced Multiple-Correct question (+4 / -2) if you select 2 correct options and 1 wrong option?`,
+          options: [
+            '-2 marks (any wrong option selected forfeits partial marks)',
+            '+1 mark',
+            '0 marks',
+            '+2 marks',
+          ],
+          correctIndex: 0,
+          explanation:
+            'Selecting even a single wrong option in a +4/-2 multiple-correct question results in -2 marks.',
+        },
+        {
+          id: `sq-${chapter}-3-3`,
+          prompt: `After making an error on a ${chapter} question, what is the best way to prevent repeating it?`,
+          options: [
+            'Tag the Error Root Cause in your Mistake Book and schedule an SM-2 flashcard',
+            'Ignore the question and move on',
+            'Memorize only the option letter',
+            'Re-read the same page passively',
+          ],
+          correctIndex: 0,
+          explanation:
+            'Root-cause tagging + SuperMemo SM-2 active recall turns every mistake into permanent exam marks.',
+        },
+      ],
+    },
+  ];
 }
 
 export interface AutoDetectedMaterialClassification {
@@ -1499,5 +1867,126 @@ export function detectJeeSubjectAndChapter(
         : `Auto-Detected: ${winningSubject} • ${detectedChapter}`,
   };
 }
+
+export interface MarathonTimestampChunk {
+  id: string;
+  timestampLabel: string;
+  endTimestampLabel: string;
+  seconds: number;
+  pageNumber: number;
+  topicTitle: string;
+  summary: string;
+}
+
+/**
+ * Parses explicit HH:MM:SS / MM:SS timestamps from a YouTube lecture transcript/outline
+ * or generates structured 30-to-60 minute marathon timestamp chunks for lectures up to 12 hours.
+ */
+export function parseOrGenerateMarathonTimestampChunks(
+  rawText: string,
+  durationHours = 3,
+  chapterTitle = 'Complete Lecture'
+): MarathonTimestampChunk[] {
+  const safeHours = Math.max(1, Math.min(12, Math.round(durationHours || 3)));
+  const lines = (rawText || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const explicitChunks: MarathonTimestampChunk[] = [];
+  const tsRegex = /(?:^|\s)(\d{1,2}):(\d{2})(?::(\d{2}))?\s*[-–—:]?\s*(.+)$/;
+
+  for (const line of lines) {
+    const m = tsRegex.exec(line);
+    if (m) {
+      const hasHours = m[3] !== undefined;
+      const hrs = hasHours ? Number(m[1]) : 0;
+      const mins = hasHours ? Number(m[2]) : Number(m[1]);
+      const secs = hasHours ? Number(m[3]) : Number(m[2]);
+      const totalSec = hrs * 3600 + mins * 60 + secs;
+      const label = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(
+        secs
+      ).padStart(2, '0')}`;
+      const nextHr = Math.min(12, hrs + 1);
+      const endLabel = `${String(nextHr).padStart(2, '0')}:${String(mins).padStart(2, '0')}:00`;
+      const idx = explicitChunks.length + 1;
+      explicitChunks.push({
+        id: `ts-chunk-${idx}`,
+        timestampLabel: label,
+        endTimestampLabel: endLabel,
+        seconds: totalSec,
+        pageNumber: ((idx - 1) % 3) + 1,
+        topicTitle: m[4].trim().slice(0, 90) || `${chapterTitle} — Segment ${idx}`,
+        summary: `Direct lecture segment at ${label}: ${m[4].trim()}`,
+      });
+    }
+  }
+
+  if (explicitChunks.length >= 2) {
+    return explicitChunks.slice(0, 16);
+  }
+
+  // Generate structured marathon chunks across the lecture duration (up to 12 hours)
+  const chunkCount = Math.max(4, Math.min(12, safeHours * 2));
+  const totalSeconds = safeHours * 3600;
+  const stepSeconds = Math.floor(totalSeconds / chunkCount);
+
+  const phaseLabels = [
+    'First Principles, Sign Conventions & Fundamental Laws',
+    'Complete Step-by-Step Derivations & Analytical Proofs',
+    'Standard Multi-Concept Solved Numericals (Level 1 & 2)',
+    'Compulsory Section B Integer & Decimal Problem Methods',
+    'Important Exceptions, Boundary Conditions & Exam Traps',
+    'High-Weightage PYQ Walkthrough & Elimination Shortcuts',
+    'Coupled Multi-Body / Mixed-Concept Advanced Applications',
+    'Rapid Formula Sheet Consolidation & Dimensional Checks',
+  ];
+
+  const generated: MarathonTimestampChunk[] = [];
+  for (let i = 0; i < chunkCount; i++) {
+    const startSec = i * stepSeconds;
+    const endSec = Math.min(totalSeconds, (i + 1) * stepSeconds);
+    const formatSec = (s: number) => {
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(
+        2,
+        '0'
+      )}`;
+    };
+    generated.push({
+      id: `ts-marathon-${i + 1}`,
+      timestampLabel: formatSec(startSec),
+      endTimestampLabel: formatSec(endSec),
+      seconds: startSec,
+      pageNumber: (i % 3) + 1,
+      topicTitle: `${chapterTitle} • Part ${i + 1}: ${phaseLabels[i % phaseLabels.length]}`,
+      summary: `Covers ${phaseLabels[i % phaseLabels.length].toLowerCase()} with timestamp-synced notes and formulas.`,
+    });
+  }
+
+  return generated;
+}
+
+export interface CanvasVectorStroke {
+  id: string;
+  tool: 'pen' | 'highlighter' | 'eraser';
+  color: string;
+  pageNumber: number;
+  target: 'original' | 'notes';
+  points: { x: number; y: number }[];
+}
+
+export interface DiagramVectorOverlayItem {
+  id: string;
+  label: string;
+  xPct: number;
+  yPct: number;
+  dx: number;
+  dy: number;
+  color: string;
+}
+
 
 

@@ -1,4 +1,8 @@
 import React from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import remarkGfm from 'remark-gfm';
+import rehypeKatex from 'rehype-katex';
 import katex from 'katex';
 
 interface MathRichTextProps {
@@ -9,10 +13,18 @@ interface MathRichTextProps {
 }
 
 /**
- * Normalizes common plain-text math/physics/chemistry expressions into LaTeX if not already wrapped in $...$,
- * and renders inline ($...$) and display ($$...$$) equations with KaTeX while preserving **bold** (key laws)
- * and *italic* (exceptions/traps) formatting.
+ * Normalizes LaTeX delimiters:
+ * - Converts \[ ... \] into $$ ... $$
+ * - Converts \( ... \) into $ ... $
+ * - Normalizes plain -> in chemical equations inside math blocks to \rightarrow
  */
+export function normalizeLatexDelimiters(input: string): string {
+  if (!input) return '';
+  return input
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_m, inner) => `$$${inner.trim()}$$`)
+    .replace(/\\\(([\s\S]+?)\\\)/g, (_m, inner) => `$${inner.trim()}$`);
+}
+
 export function renderLatexSegment(latex: string, displayMode = false): string {
   try {
     return katex.renderToString(latex.trim(), {
@@ -30,11 +42,14 @@ export const MathRichText: React.FC<MathRichTextProps> = ({
   content,
   className = '',
   blockMath = false,
+  inline = false,
 }) => {
   if (!content) return null;
 
-  if (blockMath && !content.includes('$')) {
-    const html = renderLatexSegment(content, true);
+  const normalized = normalizeLatexDelimiters(content);
+
+  if (blockMath && !normalized.includes('$')) {
+    const html = renderLatexSegment(normalized, true);
     return (
       <div
         className={`katex-block-wrapper overflow-x-auto py-1 ${className}`}
@@ -43,11 +58,39 @@ export const MathRichText: React.FC<MathRichTextProps> = ({
     );
   }
 
-  // Split by block math $$...$$ or \[...\], then inline math $...$ or \(...\)
-  const tokens = content.split(/(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$[^$\n]+?\$|\\\([\s\S]+?\\\))/g);
+  // Use react-markdown + remark-math + remark-gfm + rehype-katex for full multi-line markdown/tables/lists/math
+  if (!inline && (normalized.includes('\n') || normalized.includes('|') || normalized.includes('###'))) {
+    return (
+      <div className={`leading-relaxed space-y-1.5 ${className}`}>
+        <ReactMarkdown
+          remarkPlugins={[remarkMath, remarkGfm]}
+          rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false, trust: true }]]}
+          components={{
+            p: ({ children }) => <p className="leading-relaxed">{children}</p>,
+            strong: ({ children }) => (
+              <strong className="font-bold text-slate-900 dark:text-white bg-amber-100/70 dark:bg-amber-900/40 px-1 py-0.5 rounded">
+                {children}
+              </strong>
+            ),
+            em: ({ children }) => (
+              <em className="italic font-semibold text-indigo-700 dark:text-indigo-300 underline decoration-indigo-300/70 underline-offset-2">
+                {children}
+              </em>
+            ),
+            ul: ({ children }) => <ul className="list-disc pl-5 space-y-1">{children}</ul>,
+            ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1">{children}</ol>,
+          }}
+        >
+          {normalized}
+        </ReactMarkdown>
+      </div>
+    );
+  }
+
+  // Fast inline / single-line tokenizer with KaTeX rendering for stems, options, flashcards, and formulas
+  const tokens = normalized.split(/(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)/g);
 
   const renderMarkdownFormatting = (text: string, keyPrefix: string) => {
-    // Parse **bold** and *italic* segments
     const parts = text.split(/(\*\*[^*]+\*\*|\*[^*\n]+\*)/g);
     return parts.map((part, idx) => {
       if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
@@ -80,10 +123,7 @@ export const MathRichText: React.FC<MathRichTextProps> = ({
     <span className={`leading-relaxed ${className}`}>
       {tokens.map((token, i) => {
         if (!token) return null;
-        if (
-          (token.startsWith('$$') && token.endsWith('$$')) ||
-          (token.startsWith('\\[') && token.endsWith('\\]'))
-        ) {
+        if (token.startsWith('$$') && token.endsWith('$$')) {
           const raw = token.slice(2, -2);
           const html = renderLatexSegment(raw, true);
           return (
@@ -94,11 +134,8 @@ export const MathRichText: React.FC<MathRichTextProps> = ({
             />
           );
         }
-        if (
-          (token.startsWith('$') && token.endsWith('$')) ||
-          (token.startsWith('\\(') && token.endsWith('\\)'))
-        ) {
-          const raw = token.startsWith('$') ? token.slice(1, -1) : token.slice(2, -2);
+        if (token.startsWith('$') && token.endsWith('$')) {
+          const raw = token.slice(1, -1);
           const html = renderLatexSegment(raw, false);
           return (
             <span

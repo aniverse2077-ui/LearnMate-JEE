@@ -8,26 +8,42 @@ import {
   Layers,
   User,
   Upload,
+  Copy,
+  Printer,
 } from 'lucide-react';
 import {
   MindMapNodeItem,
   OFFICIAL_PAPERS_LIST,
   CBT_MOCK_QUESTIONS,
   JEE_ADVANCED_PAPER_QUESTIONS,
+  NEET_UG_PAPER_QUESTIONS,
+  BITSAT_PAPER_QUESTIONS,
   MaterialStudyBundle,
   StickyNoteData,
+  FormulaCardEntry,
 } from '../data/jeeInitialContent';
 import {
   CBTQuestion,
   CBTQuestionResponse,
   CBTMockSummary,
   QuestionAttemptDetail,
+  ErrorRootCauseTag,
+  SM2FlashcardItem,
+  ExamTrack,
   calculateCBTMockSummary,
   formatCountdownTimer,
   calculateNextSRSReview,
 } from '../utils/jeeEngine';
+import {
+  saveCbtInProgressDraft,
+  loadCbtInProgressDraft,
+  clearCbtInProgressDraft,
+  syncRevisionStateToFirestore,
+  CbtInProgressDraft,
+} from '../services/workspaceService';
 import { MathRichText } from './MathRichText';
 import { MaterialItem } from './HomeAndStudyViews';
+import { SpacedRepetitionHub } from './revise/SpacedRepetitionHub';
 
 export interface MistakeNotebookEntry {
   id: string;
@@ -35,6 +51,7 @@ export interface MistakeNotebookEntry {
   userAnswer: string;
   loggedAt: string;
   source: 'CBT Mock' | 'PYQ Bank' | 'Adaptive Drill';
+  rootCauseTag?: ErrorRootCauseTag;
 }
 
 type HandwritingFontId = 'caveat' | 'kalam' | 'patrick' | 'indie';
@@ -74,6 +91,10 @@ interface ReviseViewProps {
   selectedMaterial: MaterialItem | null;
   materialBundles: Record<string, MaterialStudyBundle>;
   mistakesNotebook: MistakeNotebookEntry[];
+  sm2Cards?: SM2FlashcardItem[];
+  onUpdateSM2Card?: (card: SM2FlashcardItem) => void;
+  onAddSM2Card?: (card: Omit<SM2FlashcardItem, 'id'>) => void;
+  onTagMistakeRootCause?: (id: string, cause: ErrorRootCauseTag) => void;
   onSelectMaterial: (mat: MaterialItem) => void;
   onOpenAddMaterial: (tab: 'pdf' | 'photo' | 'youtube' | 'text' | 'drive') => void;
   onAddFlashcard: (node: MindMapNodeItem) => void;
@@ -86,6 +107,10 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
   selectedMaterial,
   materialBundles,
   mistakesNotebook,
+  sm2Cards = [],
+  onUpdateSM2Card,
+  onAddSM2Card,
+  onTagMistakeRootCause,
   onSelectMaterial,
   onOpenAddMaterial,
   onAddFlashcard,
@@ -133,6 +158,23 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
   const [newStickyTitle, setNewStickyTitle] = useState('');
   const [newStickyBody, setNewStickyBody] = useState('');
 
+  // Dynamic Formula Book state (All Uploaded Materials + Custom Student Formulas)
+  const [customFormulas, setCustomFormulas] = useState<FormulaCardEntry[]>(() => {
+    try {
+      const raw = localStorage.getItem('learnmate_custom_formulas');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showAddFormulaForm, setShowAddFormulaForm] = useState(false);
+  const [newFormulaTitle, setNewFormulaTitle] = useState('');
+  const [newFormulaLatex, setNewFormulaLatex] = useState('');
+  const [newFormulaVariables, setNewFormulaVariables] = useState('');
+  const [newFormulaUnits, setNewFormulaUnits] = useState('');
+  const [newFormulaNotes, setNewFormulaNotes] = useState('');
+  const [formulaChapterFilter, setFormulaChapterFilter] = useState<string>('All');
+
   useEffect(() => {
     if (mindMapNodes.length > 0) {
       setSelectedNodeId(mindMapNodes[0].id);
@@ -177,14 +219,58 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
     showToast('Converted & pinned new Sticky Note!');
   };
 
+  const handleAddCustomFormula = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFormulaTitle.trim() || !newFormulaLatex.trim()) return;
+    const formattedFormula = newFormulaLatex.includes('$')
+      ? newFormulaLatex.trim()
+      : `$$${newFormulaLatex.trim()}$$`;
+    const entry: FormulaCardEntry = {
+      id: `custom-fc-${Date.now()}`,
+      subject: activeMaterial?.subject || 'Physics',
+      chapter: activeMaterial?.chapter || 'Custom JEE Formulas',
+      title: newFormulaTitle.trim(),
+      formula: formattedFormula,
+      variables: newFormulaVariables.trim() || 'Standard SI variables and physical constants',
+      units: newFormulaUnits.trim() || 'SI Units',
+      notes:
+        newFormulaNotes.trim() ||
+        '**Custom Student Equation:** Apply with consistent SI units and sign conventions.',
+    };
+    const next = [entry, ...customFormulas];
+    setCustomFormulas(next);
+    try {
+      localStorage.setItem('learnmate_custom_formulas', JSON.stringify(next));
+    } catch {
+      // ignore storage quota
+    }
+    void syncRevisionStateToFirestore('custom_formulas', next);
+    setNewFormulaTitle('');
+    setNewFormulaLatex('');
+    setNewFormulaVariables('');
+    setNewFormulaUnits('');
+    setNewFormulaNotes('');
+    setShowAddFormulaForm(false);
+    showToast(`Added "${entry.title}" to your Chapter Formula Book & synced to Cloud!`);
+  };
+
+  const allExtractedFormulas: FormulaCardEntry[] = [
+    ...customFormulas,
+    ...Object.values(materialBundles).flatMap((b) => b.formulas || []),
+  ];
+
+  const availableFormulaChapters = Array.from(
+    new Set(allExtractedFormulas.map((f) => f.chapter))
+  );
+
   return (
-    <div className="max-w-[1440px] mx-auto px-4 lg:px-8 py-6 space-y-6">
+    <div className="w-full px-6 lg:px-10 xl:px-12 py-6 space-y-6">
       {/* Header & Material Selector */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-              Revise &amp; Active Recall Studio
+              Revise
             </h1>
             {activeMaterial && (
               <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200/80">
@@ -192,9 +278,6 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
               </span>
             )}
           </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Multi-level KaTeX mind maps, 4-font handwritten notebook converter, 3D flashcards &amp; mistake DNA
-          </p>
         </div>
 
         {/* Sub-Tabs */}
@@ -284,7 +367,7 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
               Upload Your Study Material to Generate Mind Maps, Handwritten Notes &amp; Flashcards
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 max-w-xl mx-auto leading-relaxed">
-              Your revision workspace starts completely clean with zero preloaded chapters. Upload any PDF, handwritten notebook photo, or up-to-12-hour YouTube lecture to automatically build multi-level KaTeX mind maps, handwritten revision sheets, sticky notes, and 3D flashcards.
+              Your revision workspace starts completely clean with zero preloaded chapters. Upload any PDF, handwritten notebook photo, or up-to-12-hour YouTube lecture to automatically build multi-level concept mind maps, complete chapter formula books, handwritten revision sheets, sticky notes, and 3D flashcards.
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -507,7 +590,7 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
                       {selectedNode.formulaLatex && (
                         <div className="p-3.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/50 border border-indigo-200/80 dark:border-indigo-800 space-y-1">
                           <div className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
-                            KaTeX Mathematical Expression
+                            Core Mathematical Expression
                           </div>
                           <div className="text-slate-900 dark:text-white">
                             <MathRichText content={selectedNode.formulaLatex} />
@@ -567,11 +650,8 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
               <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-2xs space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-indigo-600">
-                      HANDWRITTEN NOTEBOOK CONVERTER &amp; OCR STUDIO
-                    </span>
                     <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                      Convert Notes, Sticky Notes &amp; Quick Sheets into Topper Handwriting
+                      Handwritten Notebook
                     </h2>
                   </div>
 
@@ -769,7 +849,7 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
                       </h3>
                     </div>
                     <div className="px-3 py-1 rounded-xl border border-amber-400/80 bg-amber-50/90 text-xs font-sans font-bold text-amber-900">
-                      Page 1 • JEE KaTeX Verified
+                      Page 1 • Equations &amp; Derivations Verified
                     </div>
                   </div>
 
@@ -994,7 +1074,7 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
                   type="text"
                   value={newStickyBody}
                   onChange={(e) => setNewStickyBody(e.target.value)}
-                  placeholder="Sticky note with KaTeX ($W = -nC_V\Delta T$)..."
+                  placeholder="Sticky note with formula ($W = -nC_V\Delta T$)..."
                   className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs flex-2 min-w-[260px]"
                 />
                 <button
@@ -1093,118 +1173,245 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
           )}
 
           {/* ================================================================= */}
-          {/* SUB-TAB 6: FORMULA BOOK (KATEX)                                   */}
+          {/* SUB-TAB 6: DYNAMIC FORMULA BOOK (ALL UPLOADED CHAPTERS & EQUATIONS) */}
           {/* ================================================================= */}
-          {activeSubTab === 'Formula Book' && activeMaterial && activeBundle && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              {activeBundle.formulas.map((fc) => (
-                <div
-                  key={fc.id}
-                  className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-2xs space-y-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-extrabold">
-                      {fc.subject} • {fc.chapter}
-                    </span>
+          {activeSubTab === 'Formula Book' && (
+            <div className="space-y-6">
+              {/* Formula Book Top Action & Chapter Filter Bar */}
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-2xs space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
+                      Formula Book ({allExtractedFormulas.length})
+                    </h2>
                   </div>
-                  <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                    {fc.title}
-                  </h3>
-                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700">
-                    <MathRichText content={fc.formula} />
-                  </div>
-                  <div className="text-xs text-slate-600 dark:text-slate-300">
-                    <MathRichText content={fc.notes} />
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddFormulaForm((v) => !v)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-xs cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>{showAddFormulaForm ? 'Close Form' : '+ Add Custom Formula'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.print();
+                        showToast('Opened Print / Save as PDF for your Chapter Formula Book!');
+                      }}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-slate-800 dark:text-slate-200 text-xs font-extrabold cursor-pointer"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Export Formula Sheet PDF</span>
+                    </button>
                   </div>
                 </div>
-              ))}
+
+                {/* Chapter Filter Pills */}
+                {availableFormulaChapters.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mr-1">
+                      Filter by Chapter:
+                    </span>
+                    {['All', ...availableFormulaChapters].map((ch) => (
+                      <button
+                        key={ch}
+                        type="button"
+                        onClick={() => setFormulaChapterFilter(ch)}
+                        className={`px-3 py-1 rounded-xl text-xs font-bold cursor-pointer ${
+                          formulaChapterFilter === ch
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                        }`}
+                      >
+                        {ch}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add Custom Formula Form */}
+                {showAddFormulaForm && (
+                  <form
+                    onSubmit={handleAddCustomFormula}
+                    className="p-4 rounded-2xl bg-indigo-50/60 dark:bg-slate-800/80 border border-indigo-200 dark:border-slate-700 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs"
+                  >
+                    <div>
+                      <label className="block font-extrabold text-slate-700 dark:text-slate-200 mb-1">
+                        Formula Title / Law Name
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={newFormulaTitle}
+                        onChange={(e) => setNewFormulaTitle(e.target.value)}
+                        placeholder="e.g., Parallel Axis Theorem / Nernst Equation"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-extrabold text-slate-700 dark:text-slate-200 mb-1">
+                        Mathematical Equation
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={newFormulaLatex}
+                        onChange={(e) => setNewFormulaLatex(e.target.value)}
+                        placeholder="e.g., I = I_{cm} + M d^2"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white dark:bg-slate-900 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-extrabold text-slate-700 dark:text-slate-200 mb-1">
+                        Variable Definitions
+                      </label>
+                      <input
+                        type="text"
+                        value={newFormulaVariables}
+                        onChange={(e) => setNewFormulaVariables(e.target.value)}
+                        placeholder="e.g., I_cm = COM inertia, M = total mass, d = perpendicular distance"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-extrabold text-slate-700 dark:text-slate-200 mb-1">
+                        SI Units &amp; Dimensions
+                      </label>
+                      <input
+                        type="text"
+                        value={newFormulaUnits}
+                        onChange={(e) => setNewFormulaUnits(e.target.value)}
+                        placeholder="e.g., kg·m² · [M¹ L² T⁰]"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                    <div className="md:col-span-2 flex flex-wrap items-center justify-between gap-3">
+                      <input
+                        type="text"
+                        value={newFormulaNotes}
+                        onChange={(e) => setNewFormulaNotes(e.target.value)}
+                        placeholder="Important condition or exam trap (e.g., Axes must be strictly parallel)..."
+                        className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-white dark:bg-slate-900"
+                      />
+                      <button
+                        type="submit"
+                        className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold cursor-pointer"
+                      >
+                        Save Formula to Chapter
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+
+              {/* Grouped Formulas by Chapter */}
+              {(formulaChapterFilter === 'All'
+                ? availableFormulaChapters
+                : [formulaChapterFilter]
+              ).map((chapterName) => {
+                const chapterFormulas = allExtractedFormulas.filter(
+                  (f) => f.chapter === chapterName
+                );
+                if (chapterFormulas.length === 0) return null;
+                return (
+                  <div key={chapterName} className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" />
+                        <span>{chapterName}</span>
+                        <span className="text-xs font-bold text-slate-400">
+                          ({chapterFormulas.length} formulas)
+                        </span>
+                      </h3>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                      {chapterFormulas.map((fc) => (
+                        <div
+                          key={fc.id}
+                          className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-2xs flex flex-col justify-between space-y-3"
+                        >
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-extrabold">
+                                {fc.subject} • {fc.chapter}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard?.writeText(fc.formula);
+                                  showToast(`Copied "${fc.title}" formula to clipboard!`);
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-[11px] font-bold text-slate-600 cursor-pointer"
+                                title="Copy Equation"
+                              >
+                                <Copy className="w-3 h-3" />
+                                <span>Copy</span>
+                              </button>
+                            </div>
+
+                            <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                              {fc.title}
+                            </h4>
+
+                            <div className="p-3.5 rounded-xl bg-indigo-50/50 dark:bg-slate-800 border border-indigo-200/80 dark:border-slate-700">
+                              <MathRichText content={fc.formula} />
+                            </div>
+
+                            {(fc.variables || fc.units) && (
+                              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700 text-[11px] space-y-1">
+                                {fc.variables && (
+                                  <div className="text-slate-700 dark:text-slate-300">
+                                    <strong className="text-slate-900 dark:text-white">Variables: </strong>
+                                    <MathRichText content={fc.variables} inline />
+                                  </div>
+                                )}
+                                {fc.units && (
+                                  <div className="text-indigo-700 dark:text-indigo-300 font-semibold">
+                                    <strong>SI Units / Dimensions: </strong>
+                                    <MathRichText content={fc.units} inline />
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="text-xs text-slate-600 dark:text-slate-300 pt-2 border-t border-slate-100 dark:border-slate-800">
+                            <MathRichText content={fc.notes} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </>
       )}
 
       {/* ================================================================= */}
-      {/* SUB-TAB 7: MISTAKE DNA (AUTO-LOGGED MISTAKES NOTEBOOK)            */}
+      {/* SUB-TAB 7: MISTAKE DNA & SUPERMEMO SM-2 NEURONZ QUEUE             */}
       {/* ================================================================= */}
       {activeSubTab === 'Mistake DNA' && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-2xs space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
-            <div>
-              <span className="text-[11px] font-extrabold uppercase tracking-wider text-rose-600">
-                AUTO-LOGGED MISTAKE DNA NOTEBOOK
-              </span>
-              <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                Questions You Answered Incorrectly Across CBT Mocks &amp; PYQ Drills
-              </h2>
-            </div>
-            <span className="px-3 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-extrabold">
-              {mistakesNotebook.length} Logged Mistakes
-            </span>
-          </div>
-
-          {mistakesNotebook.length === 0 ? (
-            <div className="p-8 text-center space-y-2">
-              <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
-              <div className="text-sm font-extrabold text-slate-800 dark:text-slate-100">
-                Zero Logged Mistakes Yet!
-              </div>
-              <p className="text-xs text-slate-500 max-w-md mx-auto">
-                Whenever you get a question wrong in an NTA CBT Mock Test, Chapter Quiz, or PYQ Bank, it is automatically captured here with its step-by-step KaTeX derivation.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {mistakesNotebook.map((entry) => (
-                <div
-                  key={entry.id}
-                  className="p-4 rounded-2xl border border-rose-200/80 bg-rose-50/30 dark:bg-rose-950/20 space-y-2.5"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-extrabold text-rose-700">
-                      {entry.source} • {entry.question.subject} ({entry.question.chapter})
-                    </span>
-                    <span className="text-[11px] text-slate-500">{entry.loggedAt}</span>
-                  </div>
-                  <div className="text-sm font-bold text-slate-900 dark:text-white">
-                    <MathRichText content={entry.question.stem} />
-                  </div>
-                  <div className="flex flex-wrap items-center gap-4 text-xs">
-                    <span className="text-rose-700 font-semibold">
-                      Your Answer: <MathRichText content={entry.userAnswer} inline />
-                    </span>
-                    <span className="text-emerald-700 font-bold">
-                      Correct Key:{' '}
-                      <MathRichText
-                        content={
-                          entry.question.section === 'Section B' ||
-                          entry.question.advancedFormat === 'numerical'
-                            ? String(entry.question.numericalAnswer)
-                            : entry.question.options[entry.question.correctIndex] || ''
-                        }
-                        inline
-                      />
-                    </span>
-                  </div>
-                  <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-700 dark:text-slate-300">
-                    <strong className="text-slate-900 dark:text-white block mb-1">
-                      Step-by-Step KaTeX Solution:
-                    </strong>
-                    <MathRichText content={entry.question.explanation} />
-                  </div>
-                  {onPracticeQuestion && (
-                    <button
-                      type="button"
-                      onClick={() => onPracticeQuestion(entry.question)}
-                      className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold cursor-pointer"
-                    >
-                      Retry Question Now →
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <SpacedRepetitionHub
+          sm2Cards={sm2Cards}
+          mistakes={mistakesNotebook}
+          onUpdateSM2Card={(updated) => {
+            if (onUpdateSM2Card) onUpdateSM2Card(updated);
+          }}
+          onAddSM2Card={(newCard) => {
+            if (onAddSM2Card) onAddSM2Card(newCard);
+          }}
+          onTagMistakeRootCause={(id, cause) => {
+            if (onTagMistakeRootCause) onTagMistakeRootCause(id, cause);
+          }}
+          onPracticeMistake={onPracticeQuestion}
+          showToast={showToast}
+        />
       )}
     </div>
   );
@@ -1214,8 +1421,9 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
 // 2. PRACTICE DASHBOARD VIEW (Marks-Style Buckets + Custom Test Builder + Mistakes)
 // ============================================================================
 interface PracticeViewProps {
-  onStartCBTMock: (examMode?: 'JEE Main' | 'JEE Advanced') => void;
+  onStartCBTMock: (examMode?: ExamTrack) => void;
   onOpenInstantPractice: (paperTitle: string, customQuestions?: CBTQuestion[]) => void;
+  onOpenCustomTestModal?: () => void;
   mistakesNotebook?: MistakeNotebookEntry[];
   onRecordMistake?: (question: CBTQuestion, userAnswer: string) => void;
 }
@@ -1223,6 +1431,7 @@ interface PracticeViewProps {
 export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
   onStartCBTMock,
   onOpenInstantPractice,
+  onOpenCustomTestModal,
   mistakesNotebook = [],
   onRecordMistake,
 }) => {
@@ -1230,8 +1439,15 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
     'Official Papers' | 'PYQs' | 'Custom Set' | 'Analysis'
   >('Official Papers');
   const [paperFilter, setPaperFilter] = useState<
-    'All' | 'JEE Main' | 'JEE Advanced' | '2026' | '2025' | '2024'
+    'All' | 'JEE Main' | 'JEE Advanced' | 'NEET UG' | 'BITSAT' | '2025' | '2024'
   >('All');
+  const [savedDraft, setSavedDraft] = useState<CbtInProgressDraft | null>(() =>
+    loadCbtInProgressDraft()
+  );
+
+  useEffect(() => {
+    setSavedDraft(loadCbtInProgressDraft());
+  }, []);
 
   // PYQ Bank Filters (Including MathonGo Marks-style Buckets)
   const [pyqSubjectFilter, setPyqSubjectFilter] = useState<
@@ -1254,13 +1470,22 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
 
   const filteredPapers = OFFICIAL_PAPERS_LIST.filter((p) => {
     const isAdv = p.paper.includes('Advanced');
+    const isNeet = p.paper.includes('NEET UG');
+    const isBitsat = p.paper.includes('BITSAT');
     if (paperFilter === 'All') return true;
-    if (paperFilter === 'JEE Main') return !isAdv;
+    if (paperFilter === 'JEE Main') return !isAdv && !isNeet && !isBitsat;
     if (paperFilter === 'JEE Advanced') return isAdv;
+    if (paperFilter === 'NEET UG') return isNeet;
+    if (paperFilter === 'BITSAT') return isBitsat;
     return String(p.year) === paperFilter;
   });
 
-  const combinedPyqPool = [...CBT_MOCK_QUESTIONS.slice(0, 30), ...JEE_ADVANCED_PAPER_QUESTIONS];
+  const combinedPyqPool = [
+    ...CBT_MOCK_QUESTIONS.slice(0, 30),
+    ...JEE_ADVANCED_PAPER_QUESTIONS,
+    ...NEET_UG_PAPER_QUESTIONS,
+    ...BITSAT_PAPER_QUESTIONS,
+  ];
   const filteredPyqs = combinedPyqPool.filter((q) => {
     const subjMatch = pyqSubjectFilter === 'All' || q.subject === pyqSubjectFilter;
     const bucketMatch =
@@ -1293,16 +1518,13 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
   };
 
   return (
-    <div className="max-w-[1440px] mx-auto px-4 lg:px-8 py-6 space-y-6">
+    <div className="w-full px-6 lg:px-10 xl:px-12 py-6 space-y-6">
       {/* Sub-Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-3.5">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-            Practice &amp; Official NTA CBT Hub
+            Practice &amp; Mock Tests
           </h1>
-          <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200/80">
-            75-Q JEE Main &amp; JEE Advanced Paper 1/2
-          </span>
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -1326,34 +1548,99 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
         </div>
       </div>
 
-      {/* Hero Banner with Dual Exam Launchers (75-Q JEE Main + JEE Advanced Paper 1/2) */}
-      <div className="bg-gradient-to-r from-[#243B82] via-[#2E4696] to-[#3B5BDB] rounded-3xl p-6 lg:p-8 text-white shadow-md flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-        <div className="space-y-2 max-w-2xl">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-[11px] font-extrabold uppercase tracking-wider">
-            2025/2026 NTA &amp; JAB OFFICIAL MARKING ENGINE
-          </span>
-          <h2 className="text-2xl lg:text-3xl font-extrabold tracking-tight">
-            Full 75-Question JEE Main CBT &amp; Multi-Format JEE Advanced CBT
+      {/* Crash-Recovery Auto-Saved CBT Mock Banner */}
+      {savedDraft && (
+        <div className="rounded-2xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50/90 dark:bg-amber-950/40 p-4 flex flex-wrap items-center justify-between gap-4 shadow-2xs">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-extrabold">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-amber-900 dark:text-amber-300">
+                  Crash-Recovery Auto-Save Ready
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-amber-200/80 text-amber-950 text-[10px] font-extrabold">
+                  {savedDraft.examMode} • Q{savedDraft.currentQNumber}
+                </span>
+              </div>
+              <p className="text-xs text-slate-700 dark:text-slate-300 mt-0.5">
+                Interrupted session saved with{' '}
+                <strong>{formatCountdownTimer(savedDraft.secondsRemaining)}</strong> remaining (Auto-saved at{' '}
+                {new Date(savedDraft.savedAt).toLocaleTimeString()}).
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onStartCBTMock(savedDraft.examMode)}
+              className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-extrabold cursor-pointer shadow-2xs"
+            >
+              Resume Interrupted Mock →
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void clearCbtInProgressDraft();
+                setSavedDraft(null);
+              }}
+              className="px-3 py-2 rounded-xl border border-amber-300 dark:border-amber-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-amber-100/60 cursor-pointer"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Hero Banner with Multi-Exam CBT Launchers */}
+      <div className="bg-gradient-to-r from-[#243B82] via-[#2E4696] to-[#3B5BDB] rounded-3xl p-6 lg:p-7 text-white shadow-md flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+        <div className="space-y-1.5 max-w-xl">
+          <h2 className="text-xl lg:text-2xl font-extrabold tracking-tight">
+            Multi-Exam Proctored CBT Simulator
           </h2>
           <p className="text-xs sm:text-sm text-indigo-100 leading-relaxed">
-            Experience the exact NTA 5-state palette: 25 Physics, 25 Chemistry &amp; 25 Mathematics questions (Section B numericals with <strong>0 negative marking</strong>), or JEE Advanced Paper 1 &amp; 2 with partial marking (+4 / -2, +1 per correct option).
+            JEE Main (+4/-1), JEE Advanced (+4/-2 Partial), NEET UG (+4/-1), and BITSAT Speed CBT (+3/-1) with 15s auto-save and fullscreen proctoring.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          {onOpenCustomTestModal && (
+            <button
+              type="button"
+              onClick={onOpenCustomTestModal}
+              className="px-4 py-2.5 rounded-2xl bg-emerald-400 text-slate-950 hover:bg-emerald-300 text-xs font-extrabold shadow-sm transition-all cursor-pointer"
+            >
+              Custom Test →
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onStartCBTMock('JEE Main')}
-            className="px-5 py-3 rounded-2xl bg-white text-[#1E3272] hover:bg-indigo-50 text-xs font-extrabold shadow-sm transition-all cursor-pointer"
+            className="px-4 py-2.5 rounded-2xl bg-white text-[#1E3272] hover:bg-indigo-50 text-xs font-extrabold shadow-sm transition-all cursor-pointer"
           >
-            Launch 75-Q JEE Main CBT →
+            JEE Main CBT →
           </button>
           <button
             type="button"
             onClick={() => onStartCBTMock('JEE Advanced')}
-            className="px-5 py-3 rounded-2xl bg-amber-400 text-slate-950 hover:bg-amber-300 text-xs font-extrabold shadow-sm transition-all cursor-pointer"
+            className="px-4 py-2.5 rounded-2xl bg-amber-400 text-slate-950 hover:bg-amber-300 text-xs font-extrabold shadow-sm transition-all cursor-pointer"
           >
-            Launch JEE Advanced Paper 1 CBT →
+            JEE Advanced CBT →
+          </button>
+          <button
+            type="button"
+            onClick={() => onStartCBTMock('NEET UG')}
+            className="px-4 py-2.5 rounded-2xl bg-teal-300 text-slate-950 hover:bg-teal-200 text-xs font-extrabold shadow-sm transition-all cursor-pointer"
+          >
+            NEET UG CBT →
+          </button>
+          <button
+            type="button"
+            onClick={() => onStartCBTMock('BITSAT')}
+            className="px-4 py-2.5 rounded-2xl bg-rose-300 text-slate-950 hover:bg-rose-200 text-xs font-extrabold shadow-sm transition-all cursor-pointer"
+          >
+            BITSAT CBT →
           </button>
         </div>
       </div>
@@ -1363,7 +1650,9 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs overflow-hidden">
           <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-1.5 flex-wrap">
-              {(['All', 'JEE Main', 'JEE Advanced', '2026', '2025', '2024'] as const).map((f) => (
+              {(
+                ['All', 'JEE Main', 'JEE Advanced', 'NEET UG', 'BITSAT', '2025', '2024'] as const
+              ).map((f) => (
                 <button
                   key={f}
                   type="button"
@@ -1386,6 +1675,15 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {filteredPapers.map((paperItem) => {
               const isAdv = paperItem.paper.includes('Advanced');
+              const isNeet = paperItem.paper.includes('NEET UG');
+              const isBitsat = paperItem.paper.includes('BITSAT');
+              const paperTrack: ExamTrack = isAdv
+                ? 'JEE Advanced'
+                : isNeet
+                ? 'NEET UG'
+                : isBitsat
+                ? 'BITSAT'
+                : 'JEE Main';
               return (
                 <div
                   key={paperItem.id}
@@ -1397,10 +1695,14 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
                         className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
                           isAdv
                             ? 'bg-amber-100 text-amber-900'
+                            : isNeet
+                            ? 'bg-teal-100 text-teal-900'
+                            : isBitsat
+                            ? 'bg-rose-100 text-rose-900'
                             : 'bg-indigo-50 text-indigo-700'
                         }`}
                       >
-                        {isAdv ? 'JEE Advanced' : 'JEE Main'}
+                        {paperTrack}
                       </span>
                       <span className="text-sm font-extrabold text-slate-900 dark:text-white">
                         {paperItem.paper}
@@ -1425,7 +1727,7 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => onStartCBTMock(isAdv ? 'JEE Advanced' : 'JEE Main')}
+                      onClick={() => onStartCBTMock(paperTrack)}
                       className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-2xs cursor-pointer"
                     >
                       CBT Mode →
@@ -1570,8 +1872,8 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
                     >
                       <div className="font-extrabold">
                         {isCorrect
-                          ? 'Correct! Verified KaTeX Derivation:'
-                          : 'Added to My Mistakes Notebook — Verified KaTeX Solution:'}
+                          ? 'Correct! Verified Step-by-Step Derivation:'
+                          : 'Added to My Mistakes Notebook — Verified Step-by-Step Solution:'}
                       </div>
                       <MathRichText content={q.explanation} />
                     </div>
@@ -1738,7 +2040,7 @@ export const ProgressDashboardView: React.FC<ProgressViewProps> = ({
   mistakesCount = 0,
 }) => {
   return (
-    <div className="max-w-[1440px] mx-auto px-4 lg:px-8 py-6 space-y-6">
+    <div className="w-full px-6 lg:px-10 xl:px-12 py-6 space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
         <div>
           <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white">
@@ -1856,7 +2158,10 @@ export const ProgressDashboardView: React.FC<ProgressViewProps> = ({
 // ============================================================================
 interface CBTMockExamProps {
   candidateName: string;
-  initialExamMode?: 'JEE Main' | 'JEE Advanced';
+  initialExamMode?: ExamTrack;
+  customQuestions?: CBTQuestion[];
+  customDurationMinutes?: number;
+  customPaperTitle?: string;
   onSubmitMock: (summary: CBTMockSummary, focusEvents: number) => void;
   onExitMock: () => void;
   onRecordMistake?: (question: CBTQuestion, userAnswer: string) => void;
@@ -1865,21 +2170,54 @@ interface CBTMockExamProps {
 export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
   candidateName,
   initialExamMode = 'JEE Main',
+  customQuestions,
+  customDurationMinutes,
+  customPaperTitle,
   onSubmitMock,
   onExitMock,
   onRecordMistake,
 }) => {
-  const [examMode, setExamMode] = useState<'JEE Main' | 'JEE Advanced'>(initialExamMode);
-  const questionsList =
-    examMode === 'JEE Advanced' ? JEE_ADVANCED_PAPER_QUESTIONS : CBT_MOCK_QUESTIONS;
+  const existingDraft = loadCbtInProgressDraft();
+  const [examMode, setExamMode] = useState<ExamTrack>(
+    existingDraft?.examMode || initialExamMode
+  );
+
+  const getQuestionsForMode = (mode: ExamTrack): CBTQuestion[] => {
+    if (customQuestions && customQuestions.length > 0) return customQuestions;
+    if (mode === 'JEE Advanced') return JEE_ADVANCED_PAPER_QUESTIONS;
+    if (mode === 'NEET UG') return NEET_UG_PAPER_QUESTIONS;
+    if (mode === 'BITSAT') return BITSAT_PAPER_QUESTIONS;
+    return CBT_MOCK_QUESTIONS;
+  };
+
+  const questionsList = getQuestionsForMode(examMode);
 
   const [activeSubject, setActiveSubject] = useState<'Physics' | 'Chemistry' | 'Mathematics'>(
-    'Physics'
+    questionsList[0]?.subject || 'Physics'
   );
   const [activeSection, setActiveSection] = useState<'Section A' | 'Section B'>('Section A');
-  const [currentQNumber, setCurrentQNumber] = useState<number>(1);
-  const [secondsRemaining, setSecondsRemaining] = useState<number>(3 * 3600);
-  const [focusEvents, setFocusEvents] = useState<number>(0);
+  const [currentQNumber, setCurrentQNumber] = useState<number>(
+    existingDraft && existingDraft.examMode === examMode
+      ? existingDraft.currentQNumber
+      : questionsList[0]?.number || 1
+  );
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(
+    existingDraft && existingDraft.examMode === examMode && existingDraft.secondsRemaining > 0
+      ? existingDraft.secondsRemaining
+      : (customDurationMinutes || (examMode === 'NEET UG' ? 200 : 180)) * 60
+  );
+  const [focusEvents, setFocusEvents] = useState<number>(
+    existingDraft?.focusSwitchCount || 0
+  );
+  const [proctorWarningLog, setProctorWarningLog] = useState<
+    { timestamp: string; reason: string }[]
+  >(existingDraft?.focusEvents || []);
+  const [isFullscreenLocked, setIsFullscreenLocked] = useState<boolean>(false);
+  const [lastAutoSavedTime, setLastAutoSavedTime] = useState<string>(
+    existingDraft?.savedAt
+      ? new Date(existingDraft.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      : 'Just now'
+  );
   const [examLanguage, setExamLanguage] = useState<'English' | 'Hindi'>('English');
   const [showInstructionsModal, setShowInstructionsModal] = useState<boolean>(false);
   const [submittedSummary, setSubmittedSummary] = useState<CBTMockSummary | null>(null);
@@ -1898,17 +2236,26 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
     return init;
   };
 
-  const [responses, setResponses] = useState<Record<string, CBTQuestionResponse>>(() =>
-    buildInitialResponses(questionsList)
-  );
+  const [responses, setResponses] = useState<Record<string, CBTQuestionResponse>>(() => {
+    if (
+      existingDraft &&
+      existingDraft.examMode === examMode &&
+      existingDraft.responses &&
+      Object.keys(existingDraft.responses).length > 0
+    ) {
+      return existingDraft.responses;
+    }
+    return buildInitialResponses(questionsList);
+  });
 
   // Reset responses when switching exam mode
-  const handleSwitchExamMode = (mode: 'JEE Main' | 'JEE Advanced') => {
-    const nextList = mode === 'JEE Advanced' ? JEE_ADVANCED_PAPER_QUESTIONS : CBT_MOCK_QUESTIONS;
+  const handleSwitchExamMode = (mode: ExamTrack) => {
+    const nextList = getQuestionsForMode(mode);
     setExamMode(mode);
-    setActiveSubject('Physics');
+    setActiveSubject(nextList[0]?.subject || 'Physics');
     setActiveSection('Section A');
     setCurrentQNumber(1);
+    setSecondsRemaining((mode === 'NEET UG' ? 200 : 180) * 60);
     setResponses(buildInitialResponses(nextList));
   };
 
@@ -1937,16 +2284,91 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
     return () => clearInterval(timer);
   }, [currentQuestion?.id, submittedSummary]);
 
-  // Tab blur focus-event detector
+  // 15-Second Crash-Recovery Auto-Save Loop (plus manual save helper)
   useEffect(() => {
+    if (submittedSummary) return;
+    const performAutoSave = () => {
+      const nowIso = new Date().toISOString();
+      void saveCbtInProgressDraft({
+        examMode,
+        secondsRemaining,
+        currentQNumber,
+        responses,
+        focusSwitchCount: focusEvents,
+        focusEvents: proctorWarningLog,
+        savedAt: nowIso,
+      });
+      setLastAutoSavedTime(
+        new Date(nowIso).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        })
+      );
+    };
+
+    const interval = setInterval(performAutoSave, 15000);
+    return () => clearInterval(interval);
+  }, [
+    examMode,
+    secondsRemaining,
+    currentQNumber,
+    responses,
+    focusEvents,
+    proctorWarningLog,
+    submittedSummary,
+  ]);
+
+  // Fullscreen lock & Tab-Switch / Blur 3-Strike Proctoring Detector
+  useEffect(() => {
+    const recordFocusStrike = (reason: string) => {
+      setFocusEvents((f) => f + 1);
+      setProctorWarningLog((prev) => [
+        { timestamp: new Date().toLocaleTimeString(), reason },
+        ...prev.slice(0, 9),
+      ]);
+    };
+
     const handleVisibility = () => {
       if (document.hidden) {
-        setFocusEvents((f) => f + 1);
+        recordFocusStrike('Tab switched or window minimized');
       }
     };
+    const handleWindowBlur = () => {
+      recordFocusStrike('Exam window lost active focus');
+    };
+    const handleFullscreenChange = () => {
+      const activeFs = Boolean(document.fullscreenElement);
+      setIsFullscreenLocked(activeFs);
+      if (!activeFs) {
+        recordFocusStrike('Exited full-screen lock during CBT session');
+      }
+    };
+
     document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('blur', handleWindowBlur);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('blur', handleWindowBlur);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
   }, []);
+
+  const handleToggleFullscreenLock = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+        setIsFullscreenLocked(true);
+      } else {
+        await document.exitFullscreen();
+        setIsFullscreenLocked(false);
+      }
+    } catch {
+      // Browser or iframe policy blocked fullscreen request
+      setIsFullscreenLocked((v) => !v);
+    }
+  };
 
   const currentResponse: CBTQuestionResponse = responses[currentQuestion.id] || {
     status: 'not_answered',
@@ -2053,13 +2475,31 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
 
   const handleSaveAndNext = () => {
     const answered = hasAnswerValue();
-    setResponses((prev) => ({
-      ...prev,
+    const nextResponses: Record<string, CBTQuestionResponse> = {
+      ...responses,
       [currentQuestion.id]: {
         ...currentResponse,
         status: answered ? 'answered' : 'not_answered',
       },
-    }));
+    };
+    setResponses(nextResponses);
+    const nowIso = new Date().toISOString();
+    void saveCbtInProgressDraft({
+      examMode,
+      secondsRemaining,
+      currentQNumber,
+      responses: nextResponses,
+      focusSwitchCount: focusEvents,
+      focusEvents: proctorWarningLog,
+      savedAt: nowIso,
+    });
+    setLastAutoSavedTime(
+      new Date(nowIso).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    );
     advanceToNextQuestion();
   };
 
@@ -2089,6 +2529,7 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
   };
 
   const handleTriggerSubmit = () => {
+    void clearCbtInProgressDraft();
     const summary = calculateCBTMockSummary(questionsList, responses);
     setSubmittedSummary(summary);
     if (onRecordMistake && summary.questionDetails) {
@@ -2107,29 +2548,37 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
 
   return (
     <div className="min-h-screen bg-[#F1F5F9] text-slate-900 flex flex-col">
-      {/* Top Official NTA CBT Bar */}
+      {/* Top Official Multi-Exam Proctored CBT Bar */}
       <header className="bg-[#243B82] text-white px-4 lg:px-6 py-3 flex flex-wrap items-center justify-between gap-3 shadow-sm">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <span className="px-2.5 py-1 rounded bg-white/15 text-[11px] font-extrabold uppercase tracking-wider">
-            NTA / JAB OFFICIAL CBT CONSOLE
+            PROCTORED CBT CONSOLE
           </span>
-          <div className="flex items-center gap-1.5 bg-white/10 p-1 rounded-xl">
-            {(['JEE Main', 'JEE Advanced'] as const).map((m) => (
+          <div className="flex items-center gap-1 bg-white/10 p-1 rounded-xl flex-wrap">
+            {(['JEE Main', 'JEE Advanced', 'NEET UG', 'BITSAT'] as const).map((m) => (
               <button
                 key={m}
                 type="button"
                 onClick={() => handleSwitchExamMode(m)}
-                className={`px-3 py-1 rounded-lg text-xs font-extrabold cursor-pointer ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-extrabold cursor-pointer ${
                   examMode === m ? 'bg-white text-[#243B82]' : 'text-indigo-100 hover:bg-white/10'
                 }`}
               >
-                {m === 'JEE Main' ? 'JEE Main (75 Qs)' : 'JEE Advanced Paper 1'}
+                {m}
               </button>
             ))}
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 text-xs font-bold">
+        <div className="flex flex-wrap items-center gap-2.5 text-xs font-bold">
+          <div
+            title="Auto-saves your responses and timer every 15 seconds"
+            className="px-2.5 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-300/30 text-emerald-200 flex items-center gap-1.5"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+            <span>Auto-Saved ({lastAutoSavedTime})</span>
+          </div>
+
           <div className="px-3 py-1.5 rounded-xl bg-white/10 border border-white/15 flex items-center gap-2">
             <Clock className="w-4 h-4 text-amber-300" />
             <span>Time Left:</span>
@@ -2138,8 +2587,28 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
             </span>
           </div>
 
-          <div className="px-3 py-1.5 rounded-xl bg-white/10 border border-white/15">
-            Focus Events: <span className="font-extrabold text-amber-300">{focusEvents}</span>
+          <button
+            type="button"
+            onClick={handleToggleFullscreenLock}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-extrabold cursor-pointer transition-all ${
+              isFullscreenLocked
+                ? 'bg-emerald-500/25 border-emerald-300/40 text-emerald-100'
+                : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
+            }`}
+          >
+            {isFullscreenLocked ? '🔒 Fullscreen Locked' : '⛶ Lock Fullscreen'}
+          </button>
+
+          <div
+            className={`px-3 py-1.5 rounded-xl border ${
+              focusEvents >= 3
+                ? 'bg-rose-600/90 border-rose-300 text-white'
+                : focusEvents > 0
+                ? 'bg-amber-500/30 border-amber-300/50 text-amber-200'
+                : 'bg-white/10 border-white/15'
+            }`}
+          >
+            Proctor Warnings: <span className="font-extrabold">{focusEvents} / 3</span>
           </div>
 
           <select
@@ -2168,10 +2637,39 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
             onClick={onExitMock}
             className="px-3 py-1.5 rounded-xl bg-rose-500/80 hover:bg-rose-600 text-white text-xs font-extrabold cursor-pointer"
           >
-            Exit CBT
+            Save &amp; Exit
           </button>
         </div>
       </header>
+
+      {/* 3-Strike Proctoring Warning Banner */}
+      {focusEvents > 0 && (
+        <div
+          className={`px-6 py-2 text-xs font-extrabold flex flex-wrap items-center justify-between gap-2 ${
+            focusEvents >= 3
+              ? 'bg-rose-600 text-white'
+              : 'bg-amber-100 text-amber-950 border-b border-amber-300'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>
+              Proctoring Alert (Strike {Math.min(3, focusEvents)} of 3):{' '}
+              {proctorWarningLog[0]?.reason || 'Tab switch or window blur detected'}. Stay in
+              full-screen mode to maintain official exam integrity.
+            </span>
+          </div>
+          {!isFullscreenLocked && (
+            <button
+              type="button"
+              onClick={handleToggleFullscreenLock}
+              className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-extrabold cursor-pointer"
+            >
+              Re-enter Fullscreen
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Main 12-Col Split Workspace */}
       <div className="flex-1 max-w-[1600px] w-full mx-auto p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -2227,7 +2725,7 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
                     >
                       {sec === 'Section A'
                         ? 'Section A (20 MCQs • +4 / -1)'
-                        : 'Section B (5 Numericals • +4 / 0 No Neg)'}
+                        : 'Section B (5 Compulsory Numericals • +4 / -1)'}
                     </button>
                   );
                 })}
@@ -2250,28 +2748,80 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
                     {currentQuestion.advancedFormat ||
                       (currentQuestion.section === 'Section B' ? 'NUMERICAL' : 'SINGLE MCQ')}
                   </span>
+                  {customPaperTitle && (
+                    <span className="px-2.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-extrabold">
+                      {customPaperTitle}
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3 text-xs font-extrabold">
                   <span className="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
-                    +{examMode === 'JEE Advanced' && (currentQuestion.advancedFormat === 'single' || currentQuestion.advancedFormat === 'matrix') ? 3 : 4} Correct
+                    +
+                    {examMode === 'JEE Advanced' &&
+                    (currentQuestion.advancedFormat === 'single' ||
+                      currentQuestion.advancedFormat === 'matrix' ||
+                      currentQuestion.advancedFormat === 'paragraph')
+                      ? 3
+                      : 4}{' '}
+                    Correct
                   </span>
                   <span className="text-rose-700 bg-rose-50 px-2.5 py-1 rounded-lg">
-                    {isNumericalQ
-                      ? '0 Negative (2025/26 NTA Rule)'
+                    {currentQuestion.advancedFormat === 'numerical'
+                      ? '0 Negative (JEE Adv Numerical)'
                       : isMultipleQ
                       ? '-2 Negative'
                       : '-1 Negative'}
                   </span>
                   {isMultipleQ && (
                     <span className="text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg">
-                      +1 Partial Marks / Option
+                      +3 / +2 / +1 Partial Marks
                     </span>
                   )}
                 </div>
               </div>
 
-              {/* KaTeX Rendered Question Stem */}
+              {/* JEE Advanced Paragraph / Comprehension Context Box */}
+              {currentQuestion.paragraphContext && (
+                <div className="p-4 rounded-xl bg-amber-50/70 border border-amber-200/80 text-xs sm:text-sm text-slate-800 space-y-1.5">
+                  <div className="text-[10px] font-extrabold uppercase tracking-wider text-amber-800">
+                    JEE Advanced Paragraph / Comprehension Stem
+                  </div>
+                  <MathRichText content={currentQuestion.paragraphContext} />
+                </div>
+              )}
+
+              {/* JEE Advanced Matrix-Match List-I / List-II Table */}
+              {currentQuestion.matrixListI && currentQuestion.matrixListII && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 rounded-xl bg-indigo-50/40 border border-indigo-200/80 text-xs">
+                  <div>
+                    <div className="font-extrabold uppercase tracking-wider text-indigo-800 mb-2">
+                      List-I
+                    </div>
+                    <div className="space-y-1.5">
+                      {currentQuestion.matrixListI.map((item, i) => (
+                        <div key={i} className="p-2 rounded-lg bg-white border border-slate-200">
+                          <MathRichText content={item} inline />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-extrabold uppercase tracking-wider text-indigo-800 mb-2">
+                      List-II
+                    </div>
+                    <div className="space-y-1.5">
+                      {currentQuestion.matrixListII.map((item, i) => (
+                        <div key={i} className="p-2 rounded-lg bg-white border border-slate-200">
+                          <MathRichText content={item} inline />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Rendered Question Stem */}
               <div className="text-base sm:text-lg font-bold text-slate-900 leading-relaxed">
                 <MathRichText
                   content={
@@ -2624,7 +3174,7 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
 
                     <div className="text-xs text-slate-700 bg-white p-3 rounded-xl border border-slate-200/80">
                       <strong className="text-slate-900 block mb-1">
-                        Verified KaTeX Step-by-Step Solution:
+                        Verified Step-by-Step Solution:
                       </strong>
                       <MathRichText content={q.explanation} />
                     </div>

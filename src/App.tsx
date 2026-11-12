@@ -16,6 +16,12 @@ import {
   GraduationCap,
   CheckCircle2,
   X,
+  PanelLeftClose,
+  PanelLeftOpen,
+  FileText,
+  Sparkles,
+  FolderOpen,
+  Mic,
 } from 'lucide-react';
 import {
   db,
@@ -37,8 +43,6 @@ import {
 
 import { LandingPage, AuthScreen, LegalModalTabId } from './components/LandingAndAuth';
 import {
-  HomeDashboardView,
-  StudyWorkspaceView,
   MaterialItem,
   StudyTaskItem,
   CreationItem,
@@ -46,13 +50,10 @@ import {
 import {
   ReviseWorkspaceView,
   PracticeDashboardView,
-  ProgressDashboardView,
-  CBTMockExamView,
   MistakeNotebookEntry,
 } from './components/RevisePracticeProgressCBT';
 import {
   AddMaterialModal,
-  StudyToolsDrawer,
   FocusTimerModal,
   LiveVoiceTutorModal,
   WorkspaceConfirmModal,
@@ -68,8 +69,26 @@ import {
   NotePageData,
   generateMaterialStudyBundle,
 } from './data/jeeInitialContent';
-import { CBTMockSummary, CBTQuestion } from './utils/jeeEngine';
-import { syncStudyTasksWithCalendarAndTasks } from './services/workspaceService';
+import {
+  CBTMockSummary,
+  CBTQuestion,
+  SM2FlashcardItem,
+  ErrorRootCauseTag,
+  ExamTrack,
+} from './utils/jeeEngine';
+import {
+  syncStudyTasksWithCalendarAndTasks,
+  clearAllIndexedDbDocuments,
+  syncChunkedMaterialToFirestore,
+  syncRevisionStateToFirestore,
+} from './services/workspaceService';
+import { AuthAndWorkspaceContext } from './context/AuthAndWorkspaceContext';
+import { DashboardView } from './components/dashboard/DashboardView';
+import { StudyWorkbenchView } from './components/study/StudyWorkbenchView';
+import { JeeCbtExamModal } from './components/cbt/JeeCbtExamModal';
+import { CustomTestGeneratorModal } from './components/cbt/CustomTestGeneratorModal';
+import { ProgressAndRankView } from './components/analytics/ProgressAndRankView';
+import { CompactStudyUtilitiesDrawer } from './components/utilities/CompactStudyUtilitiesDrawer';
 
 type PrimaryTab = 'Home' | 'Study' | 'Practice' | 'Revise' | 'Progress';
 
@@ -87,7 +106,13 @@ export function App() {
   >('Chapter Notes');
   const [selectedMaterial, setSelectedMaterial] = useState<MaterialItem | null>(null);
   const [inCBTMockMode, setInCBTMockMode] = useState<boolean>(false);
-  const [cbtExamMode, setCbtExamMode] = useState<'JEE Main' | 'JEE Advanced'>('JEE Main');
+  const [cbtExamMode, setCbtExamMode] = useState<ExamTrack>('JEE Main');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+
+  // Commercial B2C Freemium & Pro Aspirant Subscription State
+  const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'pro'>('free');
+  const [proModalOpen, setProModalOpen] = useState<boolean>(false);
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('annual');
 
   // Global Overlays State
   const [addMaterialOpen, setAddMaterialOpen] = useState<boolean>(false);
@@ -120,14 +145,14 @@ export function App() {
   const [materialBundles, setMaterialBundles] = useState<Record<string, MaterialStudyBundle>>({});
   const [tasks, setTasks] = useState<StudyTaskItem[]>([]);
   const [creations, setCreations] = useState<CreationItem[]>([]);
-  const [mistakesNotebook, setMistakesNotebook] = useState<MistakeNotebookEntry[]>(() => {
-    try {
-      const raw = localStorage.getItem('learnmate_mistakes_notebook');
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [mistakesNotebook, setMistakesNotebook] = useState<MistakeNotebookEntry[]>([]);
+  const [sm2Cards, setSm2Cards] = useState<SM2FlashcardItem[]>([]);
+  const [customTestModalOpen, setCustomTestModalOpen] = useState<boolean>(false);
+  const [customCbtConfig, setCustomCbtConfig] = useState<{
+    questions: CBTQuestion[];
+    durationMinutes: number;
+    paperTitle: string;
+  } | null>(null);
   const [streakDays, setStreakDays] = useState<number>(0);
   const [xp, setXp] = useState<number>(0);
   const [level, setLevel] = useState<number>(1);
@@ -163,6 +188,39 @@ export function App() {
     setLegalModalState({ isOpen: true, tab });
   };
 
+  // Load user-scoped Mistakes, SM-2 Cards & Subscription Tier when currentUser changes
+  useEffect(() => {
+    if (!currentUser) {
+      setMistakesNotebook([]);
+      setSm2Cards([]);
+      setSubscriptionTier('free');
+      return;
+    }
+    try {
+      const mRaw = localStorage.getItem(`learnmate_${currentUser.uid}_mistakes_notebook`);
+      if (mRaw) setMistakesNotebook(JSON.parse(mRaw));
+      const cRaw = localStorage.getItem(`learnmate_${currentUser.uid}_sm2_cards`);
+      if (cRaw) setSm2Cards(JSON.parse(cRaw));
+      const tierRaw = localStorage.getItem(`learnmate_${currentUser.uid}_subscription_tier`);
+      if (tierRaw === 'pro' || tierRaw === 'free') setSubscriptionTier(tierRaw);
+    } catch {
+      // ignore storage errors
+    }
+  }, [currentUser?.uid]);
+
+  const handleActivateProTier = () => {
+    setSubscriptionTier('pro');
+    setProModalOpen(false);
+    if (currentUser) {
+      try {
+        localStorage.setItem(`learnmate_${currentUser.uid}_subscription_tier`, 'pro');
+      } catch {
+        // ignore
+      }
+    }
+    showToast('Upgraded to LearnMate Pro Aspirant! Unlimited AI Scans, 3D Labs & CBT Mocks unlocked.');
+  };
+
   const handleRecordMistake = (
     question: CBTQuestion,
     userAnswer: string,
@@ -178,13 +236,100 @@ export function App() {
         source,
       };
       const next = [entry, ...prev];
-      try {
-        localStorage.setItem('learnmate_mistakes_notebook', JSON.stringify(next));
-      } catch {
-        // ignore storage quota
+      if (currentUser) {
+        try {
+          localStorage.setItem(
+            `learnmate_${currentUser.uid}_mistakes_notebook`,
+            JSON.stringify(next)
+          );
+        } catch {
+          // ignore storage quota
+        }
+        syncRevisionStateToFirestore('mistakes', next);
       }
       return next;
     });
+  };
+
+  const handleTagMistakeRootCause = (mistakeId: string, rootCause: ErrorRootCauseTag) => {
+    setMistakesNotebook((prev) => {
+      const next = prev.map((m) =>
+        m.id === mistakeId ? { ...m, rootCauseTag: rootCause } : m
+      );
+      if (currentUser) {
+        try {
+          localStorage.setItem(
+            `learnmate_${currentUser.uid}_mistakes_notebook`,
+            JSON.stringify(next)
+          );
+        } catch {
+          // ignore
+        }
+        syncRevisionStateToFirestore('mistakes', next);
+      }
+      return next;
+    });
+  };
+
+  const handleUpdateSM2Card = (updatedCard: SM2FlashcardItem) => {
+    setSm2Cards((prev) => {
+      const next = prev.map((c) => (c.id === updatedCard.id ? updatedCard : c));
+      if (currentUser) {
+        try {
+          localStorage.setItem(
+            `learnmate_${currentUser.uid}_sm2_cards`,
+            JSON.stringify(next)
+          );
+        } catch {
+          // ignore
+        }
+        syncRevisionStateToFirestore('sm2_cards', next);
+      }
+      return next;
+    });
+  };
+
+  const handleAddSM2Card = (cardData: Omit<SM2FlashcardItem, 'id'>) => {
+    const newCard: SM2FlashcardItem = {
+      ...cardData,
+      id: `sm2-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    };
+    setSm2Cards((prev) => {
+      const next = [newCard, ...prev];
+      if (currentUser) {
+        try {
+          localStorage.setItem(
+            `learnmate_${currentUser.uid}_sm2_cards`,
+            JSON.stringify(next)
+          );
+        } catch {
+          // ignore
+        }
+        syncRevisionStateToFirestore('sm2_cards', next);
+      }
+      return next;
+    });
+  };
+
+  // Complete Shared-Device Sign-Out Purge Handler
+  const handleSignOutAndPurgeAll = async () => {
+    const uid = currentUser?.uid;
+    setProfileModalOpen(false);
+    setMaterials([]);
+    setMaterialBundles({});
+    setSelectedMaterial(null);
+    setTasks([]);
+    setCreations([]);
+    setMistakesNotebook([]);
+    setSm2Cards([]);
+    setStreakDays(0);
+    setXp(0);
+    setLevel(1);
+    setLastMockScore(null);
+    await clearAllIndexedDbDocuments();
+    await logoutUser(uid);
+    setCurrentUser(null);
+    setUnauthScreen('landing');
   };
 
   // Pomodoro countdown effect
@@ -219,7 +364,7 @@ export function App() {
   // Listen to Firebase Auth state & sync Firestore user profile
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const isAutoStart = params.get('autostart') === '1';
+    const isAutoStart = params.get('autostart') === '1' || params.get('dev_guest') === '1';
 
     if (isAutoStart) {
       setCurrentUser({
@@ -468,7 +613,7 @@ export function App() {
     showToast('Downloaded your complete LearnMate JEE account data JSON.');
   };
 
-  // Add New Material Handler — Generates Full MaterialStudyBundle (KaTeX Notes, Mind Map, Flashcards, Sticky Notes, Quiz)
+  // Add New Material Handler — Generates Full MaterialStudyBundle (Detailed Notes, Mind Map, Flashcards, Sticky Notes, Quiz)
   const handleAddMaterial = async (newMat: {
     title: string;
     subject: 'Physics' | 'Chemistry' | 'Mathematics';
@@ -476,6 +621,8 @@ export function App() {
     sourceType: 'pdf' | 'photo' | 'youtube' | 'text' | 'drive';
     sourceRef: string;
     contentSummary: string;
+    originalFileUrl?: string;
+    originalMimeType?: string;
   }) => {
     const newId = `mat-${Date.now()}`;
     const bundle = generateMaterialStudyBundle({
@@ -485,6 +632,8 @@ export function App() {
       chapter: newMat.chapter,
       sourceType: newMat.sourceType,
       rawText: newMat.contentSummary,
+      originalFileUrl: newMat.originalFileUrl || newMat.sourceRef,
+      originalMimeType: newMat.originalMimeType,
     });
 
     const localItem: MaterialItem = {
@@ -494,6 +643,8 @@ export function App() {
       chapter: newMat.chapter,
       sourceType: newMat.sourceType,
       sourceRef: newMat.sourceRef,
+      originalFileUrl: newMat.originalFileUrl || newMat.sourceRef,
+      originalMimeType: newMat.originalMimeType,
       pageCount: bundle.pages.length,
       currentPage: 1,
       progressPct: 15,
@@ -512,24 +663,21 @@ export function App() {
     setXp((x) => x + 25);
     if (streakDays === 0) setStreakDays(1);
     showToast(
-      `Extracted "${newMat.title}" into KaTeX Notes, Multi-Level Mind Map, Handwritten Notebook & Quiz!`
+      `Extracted "${newMat.title}" into Full Detailed Notes, Formula Book, Mind Map & Quiz!`
     );
 
     if (currentUser && !currentUser.uid.startsWith('local_')) {
-      const matRef = doc(db, 'users', currentUser.uid, 'materials', newId);
       try {
-        await setDoc(matRef, {
-          userId: currentUser.uid,
-          title: newMat.title.slice(0, 190),
+        await syncChunkedMaterialToFirestore(currentUser.uid, newId, {
+          title: newMat.title,
           subject: newMat.subject,
-          chapter: newMat.chapter.slice(0, 95),
+          chapter: newMat.chapter,
           sourceType: newMat.sourceType,
-          sourceRef: (newMat.sourceRef || '').slice(0, 500),
+          sourceRef: newMat.sourceRef || '',
           pageCount: bundle.pages.length,
           currentPage: 1,
           progressPct: 15,
-          contentSummary: (newMat.contentSummary || '').slice(0, 3900),
-          createdAt: new Date().toISOString(),
+          contentSummary: newMat.contentSummary || '',
         });
       } catch {
         // Local state already updated
@@ -688,11 +836,20 @@ export function App() {
   // Full-Screen NTA CBT Practice Mock Mode
   if (inCBTMockMode) {
     return (
-      <CBTMockExamView
+      <JeeCbtExamModal
         candidateName={studentProfile.displayName || 'Candidate'}
         initialExamMode={cbtExamMode}
-        onSubmitMock={handleSubmitCBTMock}
-        onExitMock={() => setInCBTMockMode(false)}
+        customQuestions={customCbtConfig?.questions}
+        customDurationMinutes={customCbtConfig?.durationMinutes}
+        customPaperTitle={customCbtConfig?.paperTitle}
+        onSubmitMock={(summary, focusEvents) => {
+          setCustomCbtConfig(null);
+          handleSubmitCBTMock(summary, focusEvents);
+        }}
+        onExitMock={() => {
+          setCustomCbtConfig(null);
+          setInCBTMockMode(false);
+        }}
         onRecordMistake={(q, ans) => handleRecordMistake(q, ans, 'CBT Mock')}
       />
     );
@@ -711,17 +868,48 @@ export function App() {
   const activeBundle = selectedMaterial ? materialBundles[selectedMaterial.id] || null : null;
 
   return (
-    <div
-      className={`min-h-screen transition-colors ${
-        darkMode ? 'bg-slate-950 text-slate-100' : 'bg-[#F8FAFC] text-slate-900'
-      }`}
+    <AuthAndWorkspaceContext.Provider
+      value={{
+        currentUser,
+        studentProfile,
+        materials,
+        materialBundles,
+        tasks,
+        creations,
+        mistakesNotebook,
+        sm2Cards,
+        streakDays,
+        xp,
+        level,
+        lastMockScore,
+        showToast,
+        onSignOutAndPurgeAll: handleSignOutAndPurgeAll,
+      }}
     >
+      <div
+        className={`min-h-screen transition-colors ${
+          darkMode ? 'bg-slate-950 text-slate-100' : 'bg-[#F8FAFC] text-slate-900'
+        }`}
+      >
       {/* ===================================================================== */}
-      {/* UNIFIED STICKY TOP NAVIGATION HEADER                                  */}
+      {/* STREAMLINED TOP NAVBAR (Full Desktop Edge-to-Edge)                    */}
       {/* ===================================================================== */}
-      <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 px-4 lg:px-6 h-16 flex items-center justify-between gap-3">
-        {/* Left: Brand Logo + Primary 5 Tabs */}
-        <div className="flex items-center gap-6">
+      <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 px-4 lg:px-8 h-16 flex items-center justify-between gap-4 w-full">
+        {/* Left: Sidebar Collapse Toggle + Brand Wordmark */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setSidebarCollapsed((prev) => !prev)}
+            className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
+            title={sidebarCollapsed ? 'Expand Navigation Sidebar' : 'Collapse Navigation Sidebar'}
+            aria-label="Toggle Left Navigation Sidebar"
+          >
+            {sidebarCollapsed ? (
+              <PanelLeftOpen className="w-4 h-4 text-indigo-600" />
+            ) : (
+              <PanelLeftClose className="w-4 h-4 text-indigo-600" />
+            )}
+          </button>
+
           <button
             onClick={() => setActiveTab('Home')}
             className="flex items-center gap-2.5 text-left cursor-pointer group"
@@ -738,41 +926,27 @@ export function App() {
               </span>
             </div>
           </button>
-
-          {/* 5 Primary Tabs */}
-          <nav className="hidden md:flex items-center gap-1">
-            {(
-              [
-                { id: 'Home', icon: Home },
-                { id: 'Study', icon: BookOpen },
-                { id: 'Practice', icon: Target },
-                { id: 'Revise', icon: Layers },
-                { id: 'Progress', icon: BarChart3 },
-              ] as const
-            ).map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                    isActive
-                      ? 'bg-indigo-50/90 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800 shadow-2xs'
-                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 hover:bg-slate-100/70 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  {tab.id}
-                </button>
-              );
-            })}
-          </nav>
         </div>
 
-        {/* Right: Global Actions & Utilities */}
-        <div className="flex items-center gap-2">
-          <div className="hidden lg:block h-5 w-px bg-slate-200 dark:bg-slate-800 mx-1" />
+        {/* Right: Global Actions & Utilities ONLY (Add Material, Search, Study Tools, Timer, Theme, Notifications, Voice Tutor, Profile) */}
+        <div className="flex items-center gap-2.5">
+          {/* B2C Freemium / Pro Aspirant Plan Badge */}
+          <button
+            onClick={() => setProModalOpen(true)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-extrabold transition-all cursor-pointer ${
+              subscriptionTier === 'pro'
+                ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                : 'border-indigo-200 bg-indigo-50/70 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300'
+            }`}
+            title="View Free vs Pro Aspirant Subscription Plan"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+            <span>
+              {subscriptionTier === 'pro'
+                ? 'PRO ASPIRANT'
+                : `Free • ${Math.min(5, materials.length)}/5 Scans`}
+            </span>
+          </button>
 
           {/* + Add Material */}
           <button
@@ -793,7 +967,7 @@ export function App() {
             title="Global Search (Cmd+K)"
           >
             <Search className="w-3.5 h-3.5 text-slate-500" />
-            <span className="hidden xl:inline">Search</span>
+            <span className="hidden sm:inline">Search</span>
           </button>
 
           {/* Study Tools */}
@@ -807,7 +981,7 @@ export function App() {
             </span>
           </button>
 
-          {/* Focus 25:00 */}
+          {/* Focus Timer 25:00 */}
           <button
             onClick={() => setFocusTimerOpen((prev) => !prev)}
             className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-extrabold transition-all cursor-pointer ${
@@ -873,7 +1047,7 @@ export function App() {
                         Upload Your First Study Material
                       </div>
                       <div className="text-slate-600 dark:text-slate-400 mt-0.5">
-                        Add a PDF, handwritten photo, or 12-hour YouTube marathon to unlock AI notes &amp; mind maps.
+                        Add a PDF, handwritten photo, or 12-hour YouTube marathon to unlock detailed notes &amp; mind maps.
                       </div>
                     </div>
                   ) : (
@@ -888,7 +1062,7 @@ export function App() {
                         {materials.length} Uploaded Material(s) Ready for Revision
                       </div>
                       <div className="text-slate-600 mt-0.5">
-                        Review your KaTeX mind maps, handwritten sheets, and 3D flashcards.
+                        Review your formula sheets, mind maps, handwritten sheets, and 3D flashcards.
                       </div>
                     </div>
                   )}
@@ -897,14 +1071,14 @@ export function App() {
             )}
           </div>
 
-          {/* Help / Live AI Voice Tutor */}
+          {/* Live AI Voice Tutor */}
           <button
             onClick={() => setVoiceTutorOpen(true)}
-            className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-xs font-bold text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
-            title="Open Live Voice JEE Tutor"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/80 dark:bg-indigo-950/70 hover:bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:text-indigo-300 transition-all cursor-pointer"
+            title="Open Live Classroom Voice JEE Tutor"
           >
-            <HelpCircle className="w-4 h-4 text-indigo-600" />
-            <span className="hidden xl:inline">Voice Tutor</span>
+            <Mic className="w-3.5 h-3.5 text-indigo-600" />
+            <span className="hidden md:inline">Voice Tutor</span>
           </button>
 
           {/* Interactive Student Profile Avatar Button */}
@@ -920,11 +1094,159 @@ export function App() {
       </header>
 
       {/* ===================================================================== */}
-      {/* ACTIVE VIEW ROUTER                                                    */}
+      {/* FULL-DESKTOP SHELL: COLLAPSIBLE LEFT SIDEBAR + 100% FLUID STAGE       */}
       {/* ===================================================================== */}
-      <main className="pb-16">
+      <div className="flex min-h-[calc(100vh-4rem)] w-full">
+        {/* COLLAPSIBLE LEFT SIDEBAR */}
+        <aside
+          className={`shrink-0 bg-white dark:bg-slate-900 border-r border-slate-200/90 dark:border-slate-800 transition-all duration-200 flex flex-col justify-between sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto ${
+            sidebarCollapsed ? 'w-[72px] px-2.5 py-4' : 'w-64 px-3.5 py-5'
+          }`}
+        >
+          <div className="space-y-6">
+            {/* Primary Navigation */}
+            <div>
+              {!sidebarCollapsed && (
+                <div className="px-2.5 mb-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                  Workspace Navigation
+                </div>
+              )}
+              <nav className="space-y-1">
+                {(
+                  [
+                    { id: 'Home', label: 'Home Dashboard', icon: Home },
+                    { id: 'Study', label: 'Study Workbench', icon: BookOpen },
+                    { id: 'Practice', label: 'Practice & PYQs', icon: Target },
+                    { id: 'Revise', label: 'Revise & Formula Book', icon: Layers },
+                    { id: 'Progress', label: 'Progress & Analytics', icon: BarChart3 },
+                  ] as const
+                ).map((tab) => {
+                  const Icon = tab.icon;
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      title={sidebarCollapsed ? tab.label : undefined}
+                      className={`w-full flex items-center ${
+                        sidebarCollapsed ? 'justify-center px-2 py-2.5' : ' gap-3 px-3 py-2.5'
+                      } rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                        isActive
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 hover:bg-slate-100/80 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4 shrink-0" />
+                      {!sidebarCollapsed && <span className="truncate">{tab.id}</span>}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+
+            {/* Study Workbench Sub-Navigation */}
+            {!sidebarCollapsed && (
+              <div>
+                <div className="px-2.5 mb-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                  Study Sections
+                </div>
+                <div className="space-y-1">
+                  {(
+                    [
+                      { id: 'Chapter Notes', label: 'Full Chapter Notes', icon: FileText },
+                      { id: 'My Materials', label: 'Uploaded Materials', icon: FolderOpen },
+                      { id: 'AI Tutor', label: 'Doubt Solver & Visuals', icon: Sparkles },
+                      { id: 'Syllabus', label: 'JEE Syllabus Tracker', icon: BookOpen },
+                      { id: 'Create', label: 'Visual Creations', icon: Grid },
+                      { id: 'Resources', label: 'Reference Books', icon: Layers },
+                    ] as const
+                  ).map((sub) => {
+                    const SubIcon = sub.icon;
+                    const isSubActive = activeTab === 'Study' && studySubTab === sub.id;
+                    return (
+                      <button
+                        key={sub.id}
+                        onClick={() => {
+                          setStudySubTab(sub.id);
+                          setActiveTab('Study');
+                        }}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          isSubActive
+                            ? 'bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200/70 dark:border-indigo-800'
+                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100/70 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        <SubIcon className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">{sub.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Quick Uploaded Materials List in Sidebar */}
+            {!sidebarCollapsed && materials.length > 0 && (
+              <div>
+                <div className="px-2.5 mb-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                  Recent Uploads ({materials.length})
+                </div>
+                <div className="space-y-1">
+                  {materials.slice(0, 5).map((mat) => {
+                    const isSelected = selectedMaterial?.id === mat.id;
+                    return (
+                      <button
+                        key={mat.id}
+                        onClick={() => {
+                          setSelectedMaterial(mat);
+                          setStudySubTab('Chapter Notes');
+                          setActiveTab('Study');
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-xl text-xs transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-slate-900 text-white font-extrabold'
+                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold'
+                        }`}
+                      >
+                        <div className="truncate">{mat.title}</div>
+                        <div
+                          className={`text-[10px] truncate ${
+                            isSelected ? 'text-indigo-200' : 'text-slate-400'
+                          }`}
+                        >
+                          {mat.subject} • {mat.chapter}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sidebar Bottom Collapse Toggle */}
+          <div className="pt-4 border-t border-slate-200/80 dark:border-slate-800">
+            <button
+              onClick={() => setSidebarCollapsed((prev) => !prev)}
+              className={`w-full flex items-center ${
+                sidebarCollapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2.5'
+              } rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 text-slate-600 dark:text-slate-300 text-xs font-bold transition-all cursor-pointer`}
+              title={sidebarCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
+            >
+              {!sidebarCollapsed && <span>Collapse Sidebar</span>}
+              {sidebarCollapsed ? (
+                <PanelLeftOpen className="w-4 h-4 text-indigo-600" />
+              ) : (
+                <PanelLeftClose className="w-4 h-4 text-slate-500" />
+              )}
+            </button>
+          </div>
+        </aside>
+
+        {/* ACTIVE VIEW ROUTER (Full-Width Desktop Canvas) */}
+        <main className="flex-1 min-w-0 w-full pb-16">
         {activeTab === 'Home' && (
-          <HomeDashboardView
+          <DashboardView
             userName={studentProfile.displayName}
             targetExam={studentProfile.targetExam}
             onChangeTargetExam={(exam) => {
@@ -985,7 +1307,7 @@ export function App() {
         )}
 
         {activeTab === 'Study' && (
-          <StudyWorkspaceView
+          <StudyWorkbenchView
             initialSubTab={studySubTab}
             selectedMaterial={selectedMaterial}
             activeBundle={activeBundle}
@@ -1023,15 +1345,21 @@ export function App() {
                 customQuestions,
               });
             }}
+            onEarnXp={(earned, reason) => {
+              setXp((x) => x + earned);
+              showToast(reason || `+${earned} XP earned!`);
+            }}
           />
         )}
 
         {activeTab === 'Practice' && (
           <PracticeDashboardView
             onStartCBTMock={(mode = 'JEE Main') => {
+              setCustomCbtConfig(null);
               setCbtExamMode(mode);
               setInCBTMockMode(true);
             }}
+            onOpenCustomTestModal={() => setCustomTestModalOpen(true)}
             onOpenInstantPractice={(paperTitle, customQuestions) =>
               setInstantPracticeConfig({
                 isOpen: true,
@@ -1052,12 +1380,28 @@ export function App() {
             selectedMaterial={selectedMaterial}
             materialBundles={materialBundles}
             mistakesNotebook={mistakesNotebook}
+            sm2Cards={sm2Cards}
+            onUpdateSM2Card={handleUpdateSM2Card}
+            onAddSM2Card={handleAddSM2Card}
+            onTagMistakeRootCause={handleTagMistakeRootCause}
             onSelectMaterial={(mat) => setSelectedMaterial(mat)}
             onOpenAddMaterial={(tab) => {
               setAddMaterialInitialTab(tab);
               setAddMaterialOpen(true);
             }}
-            onAddFlashcard={handleAddFlashcard}
+            onAddFlashcard={(node) => {
+              handleAddFlashcard(node);
+              handleAddSM2Card({
+                chapter: selectedMaterial?.chapter || 'General',
+                subject: selectedMaterial?.subject || 'Physics',
+                frontPrompt: `Define & Explain: **${node.title}**`,
+                backAnswer: `${node.definition}\n\n**Example:** ${node.example}\n\n**Exam Trap:** ${node.commonTrap}`,
+                intervalDays: 1,
+                repetitionCount: 0,
+                easeFactor: 2.5,
+                nextReviewIso: new Date().toISOString(),
+              });
+            }}
             onPracticeQuestion={(q) =>
               setInstantPracticeConfig({
                 isOpen: true,
@@ -1072,8 +1416,9 @@ export function App() {
         )}
 
         {activeTab === 'Progress' && (
-          <ProgressDashboardView
+          <ProgressAndRankView
             onStartCBTMock={(mode = 'JEE Main') => {
+              setCustomCbtConfig(null);
               setCbtExamMode(mode);
               setInCBTMockMode(true);
             }}
@@ -1088,9 +1433,11 @@ export function App() {
             lastMockScore={lastMockScore}
             materialsCount={materials.length}
             mistakesCount={mistakesNotebook.length}
+            sm2CardsCount={sm2Cards.length}
           />
         )}
-      </main>
+        </main>
+      </div>
 
       {/* ===================================================================== */}
       {/* GLOBAL OVERLAYS, DRAWERS & MODALS                                     */}
@@ -1102,9 +1449,33 @@ export function App() {
         onAddMaterial={handleAddMaterial}
       />
 
-      <StudyToolsDrawer
+      <CompactStudyUtilitiesDrawer
         isOpen={studyToolsOpen}
         onClose={() => setStudyToolsOpen(false)}
+      />
+
+      <CustomTestGeneratorModal
+        isOpen={customTestModalOpen}
+        mistakesNotebook={mistakesNotebook}
+        onClose={() => setCustomTestModalOpen(false)}
+        onLaunchCustomCBT={(questionsOrConfig, durationMinutes = 60, paperTitle = 'Custom Test') => {
+          setCustomTestModalOpen(false);
+          if (Array.isArray(questionsOrConfig)) {
+            setCustomCbtConfig({
+              questions: questionsOrConfig,
+              durationMinutes,
+              paperTitle,
+            });
+          } else {
+            setCustomCbtConfig({
+              questions: questionsOrConfig.questions,
+              durationMinutes: questionsOrConfig.durationMinutes,
+              paperTitle: questionsOrConfig.title,
+            });
+          }
+          setCbtExamMode('JEE Main');
+          setInCBTMockMode(true);
+        }}
       />
 
       <FocusTimerModal
@@ -1158,11 +1529,7 @@ export function App() {
           setProfileModalOpen(false);
           handleOpenLegal(tab);
         }}
-        onSignOut={async () => {
-          setProfileModalOpen(false);
-          await logoutUser();
-          setUnauthScreen('landing');
-        }}
+        onSignOut={handleSignOutAndPurgeAll}
       />
 
       <LegalComplianceModal
@@ -1248,7 +1615,7 @@ export function App() {
                   },
                 },
                 {
-                  label: 'Revise: Multi-Level KaTeX Mind Maps & 4-Font Handwritten Notes',
+                  label: 'Revise: Formula Book, Mind Maps & 4-Font Handwritten Notes',
                   action: () => setActiveTab('Revise'),
                 },
               ]
@@ -1275,6 +1642,122 @@ export function App() {
         </div>
       )}
 
+      {/* B2C Freemium & Pro Aspirant Subscription Upgrade Modal */}
+      {proModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="LearnMate Pro Aspirant Subscription"
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-3xl p-6 space-y-5 text-slate-900 dark:text-white">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-extrabold uppercase tracking-wider">
+                  Commercial Student Plans • JEE Main, Advanced, NEET UG &amp; BITSAT
+                </span>
+                <h2 className="text-xl font-extrabold mt-1.5">
+                  Upgrade to LearnMate Pro Aspirant
+                </h2>
+              </div>
+              <button
+                onClick={() => setProModalOpen(false)}
+                aria-label="Close Pro Modal"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Billing Cycle Toggle */}
+            <div className="flex items-center justify-between flex-wrap gap-3 bg-slate-50 dark:bg-slate-800/70 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700">
+              <div className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                Includes JEE Main, JEE Advanced, NEET UG &amp; BITSAT Mock Engines + Cloud Sync
+              </div>
+              <div className="inline-flex rounded-xl bg-white dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-700 text-xs font-extrabold">
+                <button
+                  type="button"
+                  onClick={() => setBillingCycle('monthly')}
+                  className={`px-3 py-1.5 rounded-lg cursor-pointer ${
+                    billingCycle === 'monthly'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  Monthly (₹499/mo)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBillingCycle('annual')}
+                  className={`px-3 py-1.5 rounded-lg cursor-pointer ${
+                    billingCycle === 'annual'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  Annual Exam Pass (₹2,999/yr • Save 50%)
+                </button>
+              </div>
+            </div>
+
+            {/* Free vs Pro Comparison Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 space-y-3 flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-sm">Free Aspirant Tier</span>
+                    <span className="font-black text-base text-slate-700 dark:text-slate-200">
+                      ₹0 / forever
+                    </span>
+                  </div>
+                  <ul className="space-y-2 text-slate-600 dark:text-slate-300 font-medium">
+                    <li>• Up to 5 AI Document / Marathon Scans per day</li>
+                    <li>• Official PYQ Bank &amp; Standard Chapter Notes</li>
+                    <li>• 2 Full CBT Mock Tests per month</li>
+                    <li>• Local Browser Storage + Basic Formula Book</li>
+                  </ul>
+                </div>
+                <div className="pt-3 border-t border-slate-200/80 dark:border-slate-700 text-[11px] font-bold text-slate-500">
+                  {subscriptionTier === 'free' ? 'Current Active Plan' : 'Included in your account'}
+                </div>
+              </div>
+
+              <div className="p-5 rounded-2xl border-2 border-indigo-600 bg-indigo-50/30 dark:bg-indigo-950/30 space-y-3 flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-sm text-indigo-600 dark:text-indigo-400">
+                      Pro Aspirant Pass
+                    </span>
+                    <span className="font-black text-base text-slate-900 dark:text-white">
+                      {billingCycle === 'annual' ? '₹2,999 / year' : '₹499 / month'}
+                    </span>
+                  </div>
+                  <ul className="space-y-2 text-slate-700 dark:text-slate-200 font-semibold">
+                    <li>• Unlimited 12-Hour YouTube Marathon Timestamp Extractions</li>
+                    <li>• Unlimited Full-Screen Proctored CBT Mocks (JEE, NEET UG, BITSAT)</li>
+                    <li>• Live Classroom Voice AI Tutor (Hindi, Hinglish &amp; Indian English)</li>
+                    <li>• Interactive 2D Vector Diagram Maker, 3D WebGL Lab &amp; Cloud Sync</li>
+                  </ul>
+                </div>
+                {subscriptionTier === 'pro' ? (
+                  <div className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-center font-extrabold">
+                    ✓ Pro Aspirant Active
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleActivateProTier}
+                    className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold shadow-sm cursor-pointer"
+                  >
+                    Activate Pro Aspirant Pass Now
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Floating Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold shadow-lg flex items-center gap-2 border border-slate-700">
@@ -1283,6 +1766,7 @@ export function App() {
         </div>
       )}
     </div>
+    </AuthAndWorkspaceContext.Provider>
   );
 }
 
