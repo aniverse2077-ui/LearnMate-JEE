@@ -25,7 +25,7 @@ export interface FirebaseEnvConfig {
   firestoreDatabaseId?: string;
 }
 
-export function loadValidatedFirebaseConfig(): FirebaseEnvConfig {
+export function loadValidatedFirebaseConfig(): FirebaseEnvConfig | null {
   const apiKey = import.meta.env.VITE_FIREBASE_API_KEY as string | undefined;
   const authDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined;
   const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined;
@@ -43,11 +43,12 @@ export function loadValidatedFirebaseConfig(): FirebaseEnvConfig {
   if (!appId) missingKeys.push('VITE_FIREBASE_APP_ID');
 
   if (missingKeys.length > 0) {
-    throw new Error(
-      `[LearnMate JEE Configuration Error]: Missing required Firebase environment variables (${missingKeys.join(
+    console.warn(
+      `[LearnMate JEE]: Missing Firebase environment variables (${missingKeys.join(
         ', '
-      )}). Please configure them in your environment variables.`
+      )}). Running in local-session fallback mode.`
     );
+    return null;
   }
 
   return {
@@ -65,11 +66,16 @@ export function loadValidatedFirebaseConfig(): FirebaseEnvConfig {
 }
 
 const firebaseConfig = loadValidatedFirebaseConfig();
-const app = initializeApp(firebaseConfig);
-export const db = firebaseConfig.firestoreDatabaseId
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(app);
-export const auth = getAuth(app);
+export const isFirebaseConfigured = Boolean(firebaseConfig);
+const app = firebaseConfig ? initializeApp(firebaseConfig) : null;
+export const db = app
+  ? firebaseConfig?.firestoreDatabaseId
+    ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+    : getFirestore(app)
+  : (null as unknown as ReturnType<typeof getFirestore>);
+export const auth = app
+  ? getAuth(app)
+  : ({ currentUser: null } as unknown as ReturnType<typeof getAuth>);
 
 // Google Workspace Scopes configured via set_up_oauth
 export const WORKSPACE_SCOPES = [
@@ -124,7 +130,7 @@ export const getWorkspaceAccessToken = (): string | null => {
 };
 
 export const getFirebaseIdToken = async (): Promise<string | null> => {
-  if (auth.currentUser && typeof auth.currentUser.getIdToken === 'function') {
+  if (isFirebaseConfigured && auth.currentUser && typeof auth.currentUser.getIdToken === 'function') {
     try {
       return await auth.currentUser.getIdToken();
     } catch {
@@ -138,7 +144,7 @@ export const getFirebaseIdToken = async (): Promise<string | null> => {
 };
 
 export const getCurrentActiveUid = (): string => {
-  return auth.currentUser?.uid || fallbackUser?.uid || 'anonymous';
+  return auth?.currentUser?.uid || fallbackUser?.uid || 'anonymous';
 };
 
 export const initAuth = (
@@ -155,6 +161,12 @@ export const initAuth = (
     }
   };
   authListeners.add(notify);
+  if (!isFirebaseConfigured) {
+    queueMicrotask(() => notify(null));
+    return () => {
+      authListeners.delete(notify);
+    };
+  }
   const unsub = onAuthStateChanged(auth, (user: User | null) => {
     notify(user);
   });
@@ -176,6 +188,16 @@ export interface GoogleSignInOutcome {
 export const googleSignIn = async (
   includeWorkspaceScopes = false
 ): Promise<GoogleSignInOutcome> => {
+  if (!isFirebaseConfigured) {
+    return {
+      user: null,
+      accessToken: null,
+      token: null,
+      cancelled: false,
+      errorCode: 'FIREBASE_NOT_CONFIGURED',
+      errorMessage: 'Google Sign-In requires Firebase configuration. Please use email sign-in or configure Firebase.',
+    };
+  }
   try {
     isSigningIn = true;
     const provider = includeWorkspaceScopes ? workspaceGoogleProvider : basicGoogleProvider;
@@ -249,6 +271,9 @@ export const emailSignUp = async (
   email: string,
   password: string
 ): Promise<User> => {
+  if (!isFirebaseConfigured) {
+    return createLocalAccountSession(name, email);
+  }
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     if (name.trim()) {
@@ -269,6 +294,9 @@ export const emailSignUp = async (
 };
 
 export const emailSignIn = async (email: string, password: string): Promise<User> => {
+  if (!isFirebaseConfigured) {
+    return createLocalAccountSession(email.split('@')[0] || 'Scholar', email);
+  }
   try {
     const cred = await signInWithEmailAndPassword(auth, email, password);
     return cred.user;
@@ -308,15 +336,17 @@ export function purgeUserLocalStorage(uid?: string) {
 }
 
 export const logoutUser = async (uid?: string) => {
-  const activeUid = uid || auth.currentUser?.uid || fallbackUser?.uid;
+  const activeUid = uid || auth?.currentUser?.uid || fallbackUser?.uid;
   closeAllActiveVoiceSockets();
   purgeUserLocalStorage(activeUid);
   fallbackUser = null;
   cachedAccessToken = null;
-  try {
-    await auth.signOut();
-  } catch {
-    // ignore signOut errors on local sessions
+  if (isFirebaseConfigured && typeof auth.signOut === 'function') {
+    try {
+      await auth.signOut();
+    } catch {
+      // ignore signOut errors on local sessions
+    }
   }
   authListeners.forEach((fn) => fn(null));
 };
@@ -325,6 +355,7 @@ export const signOutUser = logoutUser;
 
 // Mandatory connection check on boot
 async function testConnection() {
+  if (!isFirebaseConfigured || !db) return;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
