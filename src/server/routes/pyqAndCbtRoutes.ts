@@ -3,7 +3,7 @@ import path from 'path';
 import { Router, Request, Response } from 'express';
 import {
   CBT_MOCK_QUESTIONS,
-  JEE_ADVANCED_PAPER_1_QUESTIONS,
+  JEE_ADVANCED_PAPER_QUESTIONS,
   NEET_UG_PAPER_QUESTIONS,
   BITSAT_PAPER_QUESTIONS,
 } from '../../data/jeeInitialContent';
@@ -14,7 +14,7 @@ export const pyqAndCbtRouter = Router();
 
 const ALL_SERVER_PYQS = [
   ...CBT_MOCK_QUESTIONS,
-  ...JEE_ADVANCED_PAPER_1_QUESTIONS,
+  ...JEE_ADVANCED_PAPER_QUESTIONS,
   ...NEET_UG_PAPER_QUESTIONS,
   ...BITSAT_PAPER_QUESTIONS,
 ];
@@ -66,8 +66,8 @@ pyqAndCbtRouter.get('/pyq/packs/:packId', (req: Request, res: Response) => {
     res.json({
       packId: 'jee-advanced-papers',
       title: 'JEE Advanced Paper 1 & 2 Official Multi-Format Pack',
-      questionCount: JEE_ADVANCED_PAPER_1_QUESTIONS.length,
-      questions: JEE_ADVANCED_PAPER_1_QUESTIONS,
+      questionCount: JEE_ADVANCED_PAPER_QUESTIONS.length,
+      questions: JEE_ADVANCED_PAPER_QUESTIONS,
     });
     return;
   }

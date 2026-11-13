@@ -3,7 +3,7 @@ import { Response } from 'express';
 import {
   CBTQuestion,
   CBTMockSummary,
-  evaluateCBTMockAttempt,
+  calculateCBTMockScore,
   predictNtaPercentileAndAir,
   QuestionResponseState,
   ExamTrack,
@@ -71,7 +71,10 @@ export function gradeCbtAttemptOnServer(params: {
   shiftDifficulty?: 'Easy' | 'Moderate' | 'Tough';
 }): ServerVerifiedCbtGradeResult {
   const examMode: ExamTrack = params.examMode || 'JEE Main';
-  const summary = evaluateCBTMockAttempt(params.questions, params.responses, examMode);
+  const normalizedQuestions = params.questions.map((q) =>
+    q.examType ? q : { ...q, examType: examMode }
+  );
+  const summary = calculateCBTMockScore(normalizedQuestions, params.responses);
   const scaledScoreOutOf300 = Math.max(
     0,
     Math.min(300, Math.round((summary.totalScore / Math.max(1, summary.maxScore)) * 300))

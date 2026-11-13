@@ -13,10 +13,10 @@ export interface MistakeBookAndImprovementModalProps {
 
 const ROOT_CAUSE_TAGS: ErrorRootCauseTag[] = [
   'Conceptual Gap',
-  'Formula Forgetting',
-  'Calculation / Sign Error',
-  'Question Misread',
-  'Time Pressure Guess',
+  'Formula Forgotten',
+  'Calculation/Silly Error',
+  'Misread Question',
+  'Time Pressure',
 ];
 
 export const MistakeBookAndImprovementModal: React.FC<

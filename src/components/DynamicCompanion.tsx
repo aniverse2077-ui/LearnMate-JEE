@@ -10,7 +10,7 @@ import {
   ChevronRight,
   Globe,
 } from 'lucide-react';
-import { EXPANDED_NTA_58_CHAPTERS, NtaMicroShard } from '../data/expandedNta58Chapters';
+import { EXPANDED_NTA_58_CHAPTERS, MicroShardTask } from '../data/expandedNta58Chapters';
 import { getAuthenticatedRequestHeaders } from '../services/workspaceService';
 
 export interface DynamicCompanionProps {
@@ -36,15 +36,15 @@ export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
 
   const matchedChapter =
     EXPANDED_NTA_58_CHAPTERS.find((c) =>
-      c.name.toLowerCase().includes(activeChapterName.toLowerCase())
+      c.chapterName.toLowerCase().includes(activeChapterName.toLowerCase())
     ) || EXPANDED_NTA_58_CHAPTERS[5];
 
-  const shards: NtaMicroShard[] = matchedChapter.microShards;
+  const shards: MicroShardTask[] = matchedChapter.microShards;
 
   const handleAskSocratic = async (hintLevel?: 1 | 2 | 3) => {
     const promptText =
       questionInput.trim() ||
-      `Give me a step-by-step ${hintLevel ? `Hint #${hintLevel}` : 'concept breakdown'} on ${matchedChapter.name}.`;
+      `Give me a step-by-step ${hintLevel ? `Hint #${hintLevel}` : 'concept breakdown'} on ${matchedChapter.chapterName}.`;
     if (hintLevel && clueCoins <= 0) return;
     if (hintLevel) {
       setClueCoins((c) => Math.max(0, c - 1));
@@ -57,7 +57,7 @@ export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
         headers,
         body: JSON.stringify({
           question: promptText,
-          chapter: matchedChapter.name,
+          chapter: matchedChapter.chapterName,
           subject: matchedChapter.subject,
           language,
           socraticMode,
@@ -119,7 +119,7 @@ export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
                 <div>
                   <div className="text-xs font-extrabold">Dynamic JEE Study Companion</div>
                   <div className="text-[10px] text-slate-300 truncate max-w-[200px]">
-                    {matchedChapter.subject} • {matchedChapter.name}
+                    {matchedChapter.subject} • {matchedChapter.chapterName}
                   </div>
                 </div>
               </div>
@@ -201,7 +201,7 @@ export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
                     rows={2}
                     value={questionInput}
                     onChange={(e) => setQuestionInput(e.target.value)}
-                    placeholder={`Ask a JEE doubt on ${matchedChapter.name} in ${language}...`}
+                    placeholder={`Ask a JEE doubt on ${matchedChapter.chapterName} in ${language}...`}
                     className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2.5 text-xs focus:outline-none focus:border-indigo-500"
                   />
 
@@ -244,7 +244,7 @@ export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
               {modeTab === 'shardz' && (
                 <div className="space-y-2">
                   <div className="text-[11px] font-bold text-slate-500">
-                    15-Minute Active-Recall Micro-Shards for {matchedChapter.name}:
+                    15-Minute Active-Recall Micro-Shards for {matchedChapter.chapterName}:
                   </div>
                   {shards.map((shard) => {
                     const done = !!completedShards[shard.id];
@@ -267,7 +267,7 @@ export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
                         </p>
                         <div className="flex items-center justify-between pt-1">
                           <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">
-                            Clue: {shard.hintClue}
+                            Clue: {matchedChapter.keyFormulasLatex[0] || matchedChapter.unitName}
                           </span>
                           <button
                             type="button"

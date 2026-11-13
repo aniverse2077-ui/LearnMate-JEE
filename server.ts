@@ -56,8 +56,12 @@ async function startServer() {
   attachVoiceLiveWebSocketServer(server);
 
   if (process.env.NODE_ENV !== 'production') {
+    const hmrPort = process.env.HMR_PORT ? Number(process.env.HMR_PORT) : undefined;
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        ...(hmrPort ? { hmr: { port: hmrPort } } : {}),
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

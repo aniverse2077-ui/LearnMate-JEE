@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { X, Database, BookOpen, CheckCircle2 } from 'lucide-react';
 import { EXPANDED_NTA_58_CHAPTERS } from '../data/expandedNta58Chapters';
-import { JEE_PYQ_BANK } from '../utils/jeeEngine';
+import { CBT_MOCK_QUESTIONS, JEE_ADVANCED_PAPER_QUESTIONS } from '../data/jeeInitialContent';
+
+const CORE_PYQ_COUNT = CBT_MOCK_QUESTIONS.length + JEE_ADVANCED_PAPER_QUESTIONS.length;
 
 export interface AdminQuestionBankModalProps {
   isOpen: boolean;
@@ -37,7 +39,7 @@ export const AdminQuestionBankModal: React.FC<AdminQuestionBankModalProps> = ({
                 Official NTA 58-Chapter Syllabus &amp; PYQ Pack Inspector
               </h2>
               <p className="text-xs text-slate-500">
-                {EXPANDED_NTA_58_CHAPTERS.length} Verified NTA Chapters • {JEE_PYQ_BANK.length} Core PYQs + Lazy JSON Shift Packs
+                {EXPANDED_NTA_58_CHAPTERS.length} Verified NTA Chapters • {CORE_PYQ_COUNT} Core PYQs + Lazy JSON Shift Packs
               </p>
             </div>
           </div>
@@ -82,10 +84,10 @@ export const AdminQuestionBankModal: React.FC<AdminQuestionBankModalProps> = ({
               <div className="flex items-center justify-between gap-2">
                 <span className="font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
                   <BookOpen className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                  {ch.name}
+                  {ch.chapterName}
                 </span>
                 <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-extrabold text-[10px]">
-                  {ch.subject} • {ch.weightagePct}%
+                  {ch.subject} • {ch.ntaWeightagePct}%
                 </span>
               </div>
               <div className="text-[11px] text-slate-500">

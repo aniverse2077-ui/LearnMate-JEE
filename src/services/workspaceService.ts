@@ -292,6 +292,22 @@ export function getUserScopedStorageKey(baseKey: string, uidOverride?: string): 
 }
 
 /**
+ * Builds standard authenticated JSON request headers with Firebase ID token & active UID.
+ */
+export async function getAuthenticatedRequestHeaders(): Promise<Record<string, string>> {
+  const idToken = await getFirebaseIdToken();
+  const uid = getCurrentActiveUid();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-LearnMate-Uid': uid,
+  };
+  if (idToken) {
+    headers.Authorization = `Bearer ${idToken}`;
+  }
+  return headers;
+}
+
+/**
  * Authenticated fetch wrapper for `/api/ai/*` routes that attaches the Firebase ID token
  * and parses structured 429/503 error payloads (`{ errorCode, message, retryAfterSeconds }`).
  */
@@ -303,15 +319,7 @@ export async function apiFetchWithAuth<T = any>(
   | { ok: false; data: Partial<T> & StructuredUpstreamError; error: StructuredUpstreamError }
 > {
   try {
-    const idToken = await getFirebaseIdToken();
-    const uid = getCurrentActiveUid();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-LearnMate-Uid': uid,
-    };
-    if (idToken) {
-      headers.Authorization = `Bearer ${idToken}`;
-    }
+    const headers = await getAuthenticatedRequestHeaders();
 
     const res = await fetch(endpoint, {
       method: 'POST',
