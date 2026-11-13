@@ -804,3 +804,69 @@ export function loadCanvasAnnotationsForMaterial(materialId: string): any[] {
   }
 }
 
+export interface SignedCloudStorageTicket {
+  ok: boolean;
+  provider: 'firebase-cloud-storage' | 'cloud-storage-fallback';
+  assetId: string;
+  objectPath: string;
+  signedUrl: string;
+  expiresInSeconds: number;
+}
+
+/**
+ * Requests a signed Cloud Storage upload/download URL from `/api/storage/signed-url` for cross-device PDF & handwritten image persistence.
+ */
+export async function requestSignedCloudStorageUrl(params: {
+  fileName: string;
+  mimeType: string;
+  operation?: 'upload' | 'download';
+  sizeBytes?: number;
+}): Promise<SignedCloudStorageTicket> {
+  const headers = await getAuthenticatedRequestHeaders();
+  const res = await fetch('/api/storage/signed-url', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      fileName: params.fileName,
+      mimeType: params.mimeType,
+      operation: params.operation || 'upload',
+      sizeBytes: params.sizeBytes || 0,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.message || `Signed URL request failed (${res.status})`);
+  }
+  return res.json();
+}
+
+/**
+ * Lazy-loads official shift PYQ JSON packs from `/pyq-packs/*.json` or `/api/pyq/packs/:packId` and caches them in IndexedDB/localStorage.
+ */
+export async function fetchLazyPyqPack(
+  packId: 'jee-main-shifts' | 'jee-advanced-papers'
+): Promise<any> {
+  const cacheKey = `learnmate_pyq_pack_${packId}`;
+  try {
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch {
+    // ignore storage read error
+  }
+
+  const res = await fetch(`/pyq-packs/${packId}.json`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch PYQ pack ${packId}`);
+  }
+  const data = await res.json();
+  try {
+    localStorage.setItem(cacheKey, JSON.stringify(data));
+  } catch {
+    // ignore quota
+  }
+  return data;
+}
+
+
