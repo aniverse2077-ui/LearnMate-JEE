@@ -1,7 +1,13 @@
 {
   "packId": "jee-main-shifts",
-  "title": "NTA JEE Main Official Shift PYQ Pack (Section A MCQs + Compulsory Section B Numericals)",
+  "title": "JEE Main Curated Sample Archive (Section A MCQs + Compulsory Section B Numericals)",
   "examType": "JEE Main",
+  "examVersion": "jee-main-2027-paper1",
+  "answerKeysStripped": true,
+  "keyVersion": "v2027.1",
+  "isPartialArchive": true,
+  "totalAvailableQuestions": 4,
+  "archiveNote": "Sample archive containing 4 representative JEE Main questions across Physics, Chemistry, and Mathematics. Graded exclusively on server via /api/cbt/grade or /api/pyq/verify-answer.",
   "markingScheme": "+4 Correct / -1 Incorrect (Section A & Compulsory Section B)",
   "updatedAt": "2026-11-12T00:00:00Z",
   "questions": [
@@ -13,6 +19,11 @@
       "questionType": "SINGLE_MCQ",
       "chapter": "Rotational Motion & Rigid Body Dynamics",
       "difficulty": "Moderate",
+      "provenanceType": "RECONSTRUCTED_WITH_SOURCE",
+      "verificationStatus": "reconstructed",
+      "examVersion": "jee-main-2027-paper1",
+      "year": 2024,
+      "shift": "Practice Archive Sample",
       "marksCorrect": 4,
       "marksWrong": -1,
       "stem": "A solid cylinder of mass $M = 4\\text{ kg}$ and radius $R = 0.5\\text{ m}$ rolls without slipping down an inclined plane of inclination $\\theta = 30^\\circ$. The magnitude of static friction force acting on the cylinder is ($g = 10\\text{ m/s}^2$):",
@@ -21,9 +32,7 @@
         "$\\frac{10}{3}\\text{ N}$",
         "$10\\text{ N}$",
         "$\\frac{40}{3}\\text{ N}$"
-      ],
-      "correctIndex": 0,
-      "explanation": "For pure rolling down an incline, $f_s = \\frac{mg\\sin\\theta}{1 + \\frac{MR^2}{I_{\\text{cm}}}}$. For a solid cylinder, $I_{\\text{cm}} = \\frac{1}{2}MR^2$, so $f_s = \\frac{1}{3}mg\\sin 30^\\circ = \\frac{1}{3}(4)(10)(0.5) = \\frac{20}{3}\\text{ N}$."
+      ]
     },
     {
       "id": "pack-jm-phy-2",
@@ -33,14 +42,15 @@
       "questionType": "NUMERICAL",
       "chapter": "Electrostatics, Gauss’s Law, Potential & Capacitors",
       "difficulty": "Tough",
+      "provenanceType": "RECONSTRUCTED_WITH_SOURCE",
+      "verificationStatus": "reconstructed",
+      "examVersion": "jee-main-2027-paper1",
+      "year": 2024,
+      "shift": "Practice Archive Sample",
       "marksCorrect": 4,
       "marksWrong": -1,
       "stem": "A $6\\text{ }\\mu\\text{F}$ capacitor charged to $20\\text{ V}$ is connected in parallel with an uncharged $4\\text{ }\\mu\\text{F}$ capacitor. The loss in electrostatic potential energy during charge redistribution (in $\\mu\\text{J}$) is:",
-      "options": ["480", "240", "720", "120"],
-      "correctIndex": 0,
-      "numericalAnswer": 480,
-      "numericalTolerance": 0.5,
-      "explanation": "Energy loss $\\Delta U = \\frac{1}{2}\\frac{C_1 C_2}{C_1 + C_2}(V_1 - V_2)^2 = \\frac{1}{2}\\frac{6 \\times 4}{6 + 4}(20)^2 = 1.2 \\times 400 = 480\\text{ }\\mu\\text{J}$."
+      "options": ["480", "240", "720", "120"]
     },
     {
       "id": "pack-jm-chem-1",
@@ -50,6 +60,11 @@
       "questionType": "SINGLE_MCQ",
       "chapter": "Werner’s Theory, IUPAC, VBT, Crystal Field Theory (CFT) & Isomerism",
       "difficulty": "Moderate",
+      "provenanceType": "RECONSTRUCTED_WITH_SOURCE",
+      "verificationStatus": "reconstructed",
+      "examVersion": "jee-main-2027-paper1",
+      "year": 2024,
+      "shift": "Practice Archive Sample",
       "marksCorrect": 4,
       "marksWrong": -1,
       "stem": "The spin-only magnetic moment (in BM) of the octahedral complex ion $[\\text{Fe}(\\text{CN})_6]^{3-}$ is:",
@@ -58,9 +73,7 @@
         "$5.92\\text{ BM}$",
         "$0.00\\text{ BM}$",
         "$4.90\\text{ BM}$"
-      ],
-      "correctIndex": 0,
-      "explanation": "In $[\\text{Fe}(\\text{CN})_6]^{3-}$, $\\text{Fe}^{3+}$ is a $3d^5$ ion. Since $\\text{CN}^-$ is a strong-field ligand, it forms a low-spin $t_{2g}^5 e_g^0$ configuration with $n = 1$ unpaired electron. Thus $\\mu = \\sqrt{1(1+2)} = \\sqrt{3} \\approx 1.73\\text{ BM}$."
+      ]
     },
     {
       "id": "pack-jm-math-1",
@@ -70,6 +83,11 @@
       "questionType": "SINGLE_MCQ",
       "chapter": "Indefinite & Definite Integration, King’s Property, Leibniz Rule & Area Under Curves",
       "difficulty": "Moderate",
+      "provenanceType": "RECONSTRUCTED_WITH_SOURCE",
+      "verificationStatus": "reconstructed",
+      "examVersion": "jee-main-2027-paper1",
+      "year": 2025,
+      "shift": "Practice Archive Sample",
       "marksCorrect": 4,
       "marksWrong": -1,
       "stem": "The value of the definite integral $I = \\int_{0}^{\\pi/2} \\frac{\\sin^{2025}x}{\\sin^{2025}x + \\cos^{2025}x}\\,dx$ is:",
@@ -78,9 +96,7 @@
         "$\\frac{\\pi}{2}$",
         "$\\pi$",
         "$0$"
-      ],
-      "correctIndex": 0,
-      "explanation": "Applying King's property $\\int_0^a f(x)\\,dx = \\int_0^a f(a-x)\\,dx$, we get $2I = \\int_0^{\\pi/2} 1\\,dx = \\frac{\\pi}{2} \\implies I = \\frac{\\pi}{4}$."
+      ]
     }
   ]
 }

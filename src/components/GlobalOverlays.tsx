@@ -40,6 +40,9 @@ import {
 } from 'lucide-react';
 import {
   evaluateMathFunction,
+  evaluateMathDetailed,
+  validateMathSyntax,
+  AngleMode,
   evaluateDerivative,
   detectEquationParameters,
   findRootsAndExtrema,
@@ -60,10 +63,26 @@ import {
   DriveFileItem,
   saveDocumentToIndexedDb,
   extractPdfTextAndMetadataWithPdfJs,
+  extractScannedPdfPagesViaOcr,
   apiFetchWithAuth,
+  ingestYouTubeOnServer,
+  reportQuestionIssueOnServer,
+  verifySinglePyqAnswerOnServer,
+  requestSignedCloudStorageUrl,
+  confirmCloudUpload,
 } from '../services/workspaceService';
+import {
+  getDaysToJeeMain2027Session1,
+  GLOBAL_PPP_PRICING,
+  SupportedCurrency,
+} from '../config/examSpecs';
 import { CBT_MOCK_QUESTIONS } from '../data/jeeInitialContent';
-import { googleSignIn, getWorkspaceAccessToken, registerActiveVoiceSocket } from '../firebase';
+import {
+  googleSignIn,
+  getWorkspaceAccessToken,
+  registerActiveVoiceSocket,
+  getFirebaseIdToken,
+} from '../firebase';
 import { LegalModalTabId } from './LandingAndAuth';
 import { MathRichText } from './MathRichText';
 
@@ -126,54 +145,85 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
 
   const handleAnalyzeYouTube = async () => {
     if (!youtubeUrl.trim() && !transcriptOrOutline.trim()) {
-      setErrorText('Please enter a YouTube lecture URL or paste a lecture topic outline.');
+      setErrorText('Please enter a YouTube lecture URL or paste a lecture transcript/outline.');
       return;
     }
     setErrorText(null);
     setAnalyzing(true);
     setStatusMessage(
-      `Auto-identifying JEE subject & chapter and extracting ${lectureDurationHours}h marathon lecture notes, derivations, formulas & mind map...`
+      'Validating YouTube video ID and verifying authorized captions or pasted transcript...'
     );
     try {
-      const initialDetection = detectJeeSubjectAndChapter(
-        `${youtubeUrl} ${transcriptOrOutline}`,
-        titleInput
+      const ingestRes = await ingestYouTubeOnServer({
+        url: youtubeUrl.trim(),
+        transcriptText: transcriptOrOutline.trim(),
+        title: titleInput.trim() || undefined,
+      });
+
+      if (!ingestRes.ok) {
+        const metaTitle = (ingestRes.data as any)?.metadata?.title
+          ? ` (${(ingestRes.data as any).metadata.title})`
+          : '';
+        setErrorText(
+          `[${ingestRes.error.errorCode}] ${ingestRes.error.message}${metaTitle}`
+        );
+        return;
+      }
+
+      const verifiedTranscript = String(
+        (ingestRes.data as any).transcriptText || transcriptOrOutline.trim()
+      );
+      const ytTitle =
+        titleInput.trim() ||
+        String((ingestRes.data as any).metadata?.title || '').trim() ||
+        detectJeeSubjectAndChapter(verifiedTranscript, titleInput).chapter;
+
+      setStatusMessage(
+        `Structuring verified transcript into chapter notes, formulas & mind map (${lectureDurationHours}h lecture)...`
       );
 
-      const { ok, data } = await apiFetchWithAuth<{ text?: string }>(
-        '/api/ai/analyze',
-        {
-          youtubeUrl: youtubeUrl.trim() || 'https://www.youtube.com/watch',
-          lectureDurationHours,
-          transcriptOrOutline: transcriptOrOutline.trim(),
-          sourceType: 'youtube',
-          prompt: `Automatically identify the JEE subject (Physics, Chemistry, or Mathematics) and chapter for "${initialDetection.chapter}" (${lectureDurationHours}-hour lecture) and extract exhaustive full chapter notes: Complete Theory, Step-by-Step Derivations, Solved Numerical Examples, Exceptions/Traps, and All Chapter Formulas ($...$ and $$...$$).`,
-        }
+      const initialDetection = detectJeeSubjectAndChapter(
+        `${youtubeUrl} ${verifiedTranscript}`,
+        ytTitle
       );
-      const extractedAiText = ok ? data.text || '' : '';
+
+      let extractedAiText = '';
+      if (verifiedTranscript.length >= 20) {
+        const aiRes = await apiFetchWithAuth<{ text?: string }>('/api/ai/analyze', {
+          youtubeUrl: youtubeUrl.trim() || undefined,
+          lectureDurationHours,
+          transcriptOrOutline: verifiedTranscript.slice(0, 12000),
+          sourceType: 'youtube',
+          prompt: `Structure these verified lecture transcript segments for "${initialDetection.chapter}" into chapter notes, derivations, and equations without inventing external facts.`,
+        });
+        if (aiRes.ok && aiRes.data.text) {
+          extractedAiText = aiRes.data.text;
+        }
+      }
+
       const finalDetection = detectJeeSubjectAndChapter(
-        `${youtubeUrl} ${transcriptOrOutline} ${extractedAiText}`,
-        titleInput
+        `${youtubeUrl} ${verifiedTranscript} ${extractedAiText}`,
+        ytTitle
       );
 
       await onAddMaterial({
-        title: titleInput.trim() || finalDetection.chapter,
+        title: ytTitle,
         subject: finalDetection.subject,
         chapter: finalDetection.chapter,
         sourceType: 'youtube',
-        sourceRef: youtubeUrl.trim() || `YouTube ${lectureDurationHours}h Lecture`,
+        sourceRef: youtubeUrl.trim() || `YouTube Transcript`,
         originalFileUrl: youtubeUrl.trim() || undefined,
         originalMimeType: 'video/youtube',
-        contentSummary:
-          extractedAiText ||
-          `**${finalDetection.chapter}** (${finalDetection.subject} • ${lectureDurationHours}h Marathon Lecture)\n\n${transcriptOrOutline.trim()}`,
+        contentSummary: extractedAiText
+          ? `${verifiedTranscript}\n\n---\n### Structured Lecture Synthesis\n${extractedAiText}`
+          : verifiedTranscript,
       });
       setYoutubeUrl('');
       setTranscriptOrOutline('');
       setTitleInput('');
       onClose();
     } catch (err: any) {
-      setErrorText(err?.message || 'Failed to analyze YouTube lecture.');
+      setErrorText(err?.message || 'Failed to ingest YouTube lecture.');
     } finally {
       setAnalyzing(false);
       setStatusMessage('');
@@ -191,7 +241,7 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
     setStatusMessage(
       mode === 'photo'
         ? `Auto-detecting JEE subject & chapter and running Handwritten Notes Scan on ${file.name}...`
-        : `Parsing ${file.name} via client-side PDF engine & storing binary in IndexedDB...`
+        : `Parsing ${file.name} via local pdf.js worker & storing binary in IndexedDB...`
     );
 
     try {
@@ -207,19 +257,60 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
       const base64Data = fullDataUrl.split(',')[1] || '';
 
       let clientPdfText = '';
-      let pdfPageCount = 3;
+      let pdfPageCount = 1;
+      let ocrNotesSummary = '';
+
       if (mode === 'pdf' && file.name.toLowerCase().endsWith('.pdf')) {
-        const extractedPdf = await extractPdfTextAndMetadataWithPdfJs(file);
+        const extractedPdf = await extractPdfTextAndMetadataWithPdfJs(
+          file,
+          (pct, cur, total) =>
+            setStatusMessage(`Extracting PDF page ${cur}/${total} (${pct}%)...`)
+        );
+        if (extractedPdf.extractionError) {
+          setErrorText(extractedPdf.extractionError);
+          setAnalyzing(false);
+          setStatusMessage('');
+          return;
+        }
         clientPdfText = extractedPdf.extractedText;
         pdfPageCount = extractedPdf.pageCount;
+
+        if (extractedPdf.scannedPageNumbers.length > 0) {
+          setStatusMessage(
+            `Running vision OCR on ${Math.min(60, extractedPdf.scannedPageNumbers.length)} scanned page(s)...`
+          );
+          const { ocrTextByPage } = await extractScannedPdfPagesViaOcr(
+            file,
+            extractedPdf.scannedPageNumbers,
+            (done, total) =>
+              setStatusMessage(`Running vision OCR on scanned PDF pages (${done}/${total})...`)
+          );
+          if (ocrTextByPage.size > 0) {
+            const existingBlocks = new Map<number, string>();
+            for (const block of clientPdfText.split(/\n{2,}/)) {
+              const m = /^\[Page\s+(\d+)\]/i.exec(block.trim());
+              if (m) existingBlocks.set(Number(m[1]), block.trim());
+            }
+            for (const [pgNum, txt] of ocrTextByPage.entries()) {
+              existingBlocks.set(pgNum, txt);
+            }
+            clientPdfText = Array.from(existingBlocks.entries())
+              .sort((a, b) => a[0] - b[0])
+              .map((entry) => entry[1])
+              .join('\n\n');
+            ocrNotesSummary = `Vision OCR completed on ${ocrTextByPage.size} scanned page(s).`;
+          }
+        }
       }
 
+      const detectedMime = file.type || (mode === 'pdf' ? 'application/pdf' : 'image/jpeg');
       const docId = `idb-doc-${Date.now()}`;
       await saveDocumentToIndexedDb({
         id: docId,
         userId: 'active_user',
+        file,
         title: file.name,
-        mimeType: file.type || (mode === 'pdf' ? 'application/pdf' : 'image/jpeg'),
+        mimeType: detectedMime,
         dataUrl: fullDataUrl,
         extractedText: clientPdfText,
         pageCount: pdfPageCount,
@@ -227,23 +318,48 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
         createdAt: new Date().toISOString(),
       });
 
+      // Best-effort owner-scoped Cloud Storage upload when bucket is configured
+      try {
+        const ticket = await requestSignedCloudStorageUrl({
+          fileName: file.name,
+          mimeType: detectedMime,
+          operation: 'upload',
+          sizeBytes: file.size,
+        });
+        if (ticket.ok && ticket.storageConfigured && ticket.signedUrl && ticket.assetId) {
+          const putRes = await fetch(ticket.signedUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': detectedMime },
+            body: file,
+          });
+          if (putRes.ok) {
+            await confirmCloudUpload(ticket.assetId);
+          }
+        }
+      } catch {
+        // Cloud Storage optional in local dev; IndexedDB holds full document safely
+      }
+
       const fileStem = file.name.replace(/\.[^/.]+$/, '');
       const initialDetection = detectJeeSubjectAndChapter(
         `${fileStem} ${clientPdfText.slice(0, 2000)}`,
         titleInput
       );
-      const detectedMime = file.type || (mode === 'pdf' ? 'application/pdf' : 'image/jpeg');
 
-      const { ok, data } = await apiFetchWithAuth<{ text?: string }>(
-        '/api/ai/analyze',
-        {
-          mediaBase64: base64Data.slice(0, 600000),
-          mimeType: detectedMime,
-          sourceType: mode,
-          prompt: `Automatically identify whether this material belongs to JEE Physics, Chemistry, or Mathematics and which chapter it covers, then extract exhaustive full chapter notes for "${initialDetection.chapter}" from ${file.name}: Complete Theory, Step-by-Step Derivations, Solved Numerical Examples, Exceptions/Traps, and All Formulas ($...$ and $$...$$).\n\nExtracted Text Context:\n${clientPdfText.slice(0, 4000)}`,
-        }
-      );
-      const aiText = ok ? data.text || '' : '';
+      let aiText = '';
+      if (mode === 'photo' || clientPdfText.trim().length < 80) {
+        const { ok, data } = await apiFetchWithAuth<{ text?: string }>(
+          '/api/ai/analyze',
+          {
+            mediaBase64: base64Data.slice(0, 600000),
+            mimeType: detectedMime,
+            sourceType: mode,
+            prompt: `Automatically identify whether this material belongs to JEE Physics, Chemistry, or Mathematics and which chapter it covers, then extract concise notes for "${initialDetection.chapter}" from ${file.name}.\n\nExtracted Text Context:\n${clientPdfText.slice(0, 4000)}`,
+          }
+        );
+        aiText = ok ? data.text || '' : '';
+      }
+
       const finalDetection = detectJeeSubjectAndChapter(
         `${fileStem} ${clientPdfText.slice(0, 2000)} ${aiText}`,
         titleInput
@@ -257,10 +373,14 @@ export const AddMaterialModal: React.FC<AddMaterialModalProps> = ({
         sourceRef: file.name,
         originalFileUrl: fullDataUrl,
         originalMimeType: detectedMime,
-        contentSummary:
-          aiText ||
-          clientPdfText ||
-          `**${finalDetection.chapter}** (${finalDetection.subject}): IndexedDB-stored document (${pdfPageCount} pages) from ${file.name}.`,
+        contentSummary: clientPdfText
+          ? aiText
+            ? `${clientPdfText}\n\n---\n### AI Extracted Notes\n${aiText}`
+            : ocrNotesSummary
+            ? `${clientPdfText}\n\n<!-- ${ocrNotesSummary} -->`
+            : clientPdfText
+          : aiText ||
+            `**${finalDetection.chapter}** (${finalDetection.subject}): IndexedDB-stored document (${pdfPageCount} pages) from ${file.name}. Needs OCR or text extraction.`,
       });
       setTitleInput('');
       onClose();
@@ -748,14 +868,16 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
   const toScreenY = (y: number) =>
     pad + plotH - ((y - effYMin) / Math.max(0.001, effYMax - effYMin)) * plotH;
 
+  const parsedAngleMode: AngleMode = angleMode === 'DEG' ? 'deg' : 'rad';
+
   const buildCurvePath = (expr: string, isDerivative = false) => {
     const pts: string[] = [];
     const steps = 180;
     for (let i = 0; i <= steps; i++) {
       const x = effXMin + (i / steps) * (effXMax - effXMin);
       const y = isDerivative
-        ? evaluateDerivative(expr, x, sliderParams)
-        : evaluateMathFunction(expr, x, sliderParams);
+        ? evaluateDerivative(expr, x, sliderParams, parsedAngleMode)
+        : evaluateMathFunction(expr, x, sliderParams, parsedAngleMode);
       if (y !== null && y >= effYMin * 1.4 && y <= effYMax * 1.4) {
         const sx = toScreenX(x).toFixed(1);
         const sy = toScreenY(y).toFixed(1);
@@ -769,7 +891,7 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
   const specialPoints: GraphSpecialPoint[] = [];
   const visibleEqs = equations.filter((e) => e.visible && e.expr.trim());
   visibleEqs.forEach((eq) => {
-    const pts = findRootsAndExtrema(eq.expr, effXMin, effXMax, sliderParams);
+    const pts = findRootsAndExtrema(eq.expr, effXMin, effXMax, sliderParams, parsedAngleMode);
     pts.forEach((p) => {
       if (p.y >= effYMin && p.y <= effYMax) {
         specialPoints.push(p);
@@ -782,7 +904,8 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
       visibleEqs[1].expr,
       effXMin,
       effXMax,
-      sliderParams
+      sliderParams,
+      parsedAngleMode
     );
     inters.forEach((p) => {
       if (p.y >= effYMin && p.y <= effYMax) {
@@ -792,15 +915,10 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
   }
 
   const evaluateScientificExpr = (raw: string) => {
-    let transformed = raw;
-    if (angleMode === 'DEG') {
-      transformed = transformed
-        .replace(/sin\(([^)]+)\)/g, 'sin(($1) * pi / 180)')
-        .replace(/cos\(([^)]+)\)/g, 'cos(($1) * pi / 180)')
-        .replace(/tan\(([^)]+)\)/g, 'tan(($1) * pi / 180)');
-    }
-    const val = evaluateMathFunction(transformed, 1);
-    setCalcResult(val !== null ? String(Number(val.toFixed(6))) : 'Syntax Error');
+    const res = evaluateMathDetailed(raw, 1, {}, parsedAngleMode);
+    setCalcResult(
+      res.value !== null ? String(Number(res.value.toFixed(6))) : res.error || 'Syntax Error'
+    );
   };
 
   const statsNumbers = statsRaw
@@ -818,9 +936,9 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
       aria-label="Study Tools"
       className="fixed inset-0 z-50 bg-slate-900/35 flex justify-end"
     >
-      <div className="w-full max-w-[700px] bg-white dark:bg-slate-900 h-full shadow-2xl border-l border-slate-200 dark:border-slate-800 flex flex-col overflow-y-auto">
+      <div className="w-full max-w-[700px] bg-white dark:bg-slate-900 h-full shadow-2xl border-l border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="px-6 py-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
+        <div className="px-6 py-4 shrink-0 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
           <div>
             <h2 className="font-display font-bold text-xl text-slate-900 dark:text-white">
               Study Tools &amp; Desmos Graphing Lab
@@ -840,7 +958,7 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
         </div>
 
         {/* 5 Tabs */}
-        <div className="px-6 pt-2 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 overflow-x-auto">
+        <div className="px-6 pt-2.5 shrink-0 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 overflow-x-auto">
           {[
             { id: 'Graph', icon: TrendingUp },
             { id: 'Calculator', icon: Calculator },
@@ -869,7 +987,7 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
         </div>
 
         {/* Body */}
-        <div className="p-6 flex-1 space-y-4">
+        <div className="p-6 flex-1 overflow-y-auto space-y-4">
           {activeTab === 'Graph' && (
             <div className="space-y-4">
               {/* Desmos Presets & Actions Bar */}
@@ -949,76 +1067,90 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
 
               {/* Multi-Equation List */}
               <div className="space-y-2">
-                {equations.map((eq, idx) => (
-                  <div
-                    key={eq.id}
-                    className="flex items-center gap-2 p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50"
-                  >
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setEquations((prev) =>
-                          prev.map((item) =>
-                            item.id === eq.id ? { ...item, visible: !item.visible } : item
-                          )
-                        )
-                      }
-                      aria-label={`Toggle visibility for equation ${idx + 1}`}
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold cursor-pointer shrink-0"
-                      style={{ backgroundColor: eq.visible ? eq.color : '#94A3B8' }}
-                    >
-                      {eq.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                    </button>
-
-                    <input
-                      type="text"
-                      value={eq.expr}
-                      onChange={(e) =>
-                        setEquations((prev) =>
-                          prev.map((item) =>
-                            item.id === eq.id ? { ...item, expr: e.target.value } : item
-                          )
-                        )
-                      }
-                      placeholder="e.g., y = a * x^2 - 4"
-                      className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-[#4F46E5]"
-                    />
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setEquations((prev) =>
-                          prev.map((item) =>
-                            item.id === eq.id
-                              ? { ...item, showDerivative: !item.showDerivative }
-                              : item
-                          )
-                        )
-                      }
-                      title="Toggle d/dx Derivative Curve Overlay"
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold border cursor-pointer ${
-                        eq.showDerivative
-                          ? 'bg-amber-50 text-amber-800 border-amber-300'
-                          : 'border-slate-200 text-slate-500 hover:bg-slate-100'
+                {equations.map((eq, idx) => {
+                  const syntax = eq.expr.trim() ? validateMathSyntax(eq.expr) : { valid: true };
+                  return (
+                    <div
+                      key={eq.id}
+                      className={`p-2 rounded-xl border bg-slate-50/50 dark:bg-slate-800/50 space-y-1 ${
+                        syntax.valid
+                          ? 'border-slate-200 dark:border-slate-700'
+                          : 'border-rose-300 bg-rose-50/40'
                       }`}
                     >
-                      d/dx
-                    </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEquations((prev) =>
+                              prev.map((item) =>
+                                item.id === eq.id ? { ...item, visible: !item.visible } : item
+                              )
+                            )
+                          }
+                          aria-label={`Toggle visibility for equation ${idx + 1}`}
+                          className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold cursor-pointer shrink-0"
+                          style={{ backgroundColor: eq.visible ? eq.color : '#94A3B8' }}
+                        >
+                          {eq.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                        </button>
 
-                    {equations.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setEquations((prev) => prev.filter((item) => item.id !== eq.id))
-                        }
-                        aria-label="Remove equation"
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                ))}
+                        <input
+                          type="text"
+                          value={eq.expr}
+                          onChange={(e) =>
+                            setEquations((prev) =>
+                              prev.map((item) =>
+                                item.id === eq.id ? { ...item, expr: e.target.value } : item
+                              )
+                            )
+                          }
+                          placeholder="e.g., y = a * x^2 - 4"
+                          className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-[#4F46E5]"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEquations((prev) =>
+                              prev.map((item) =>
+                                item.id === eq.id
+                                  ? { ...item, showDerivative: !item.showDerivative }
+                                  : item
+                              )
+                            )
+                          }
+                          title="Toggle d/dx Derivative Curve Overlay"
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold border cursor-pointer ${
+                            eq.showDerivative
+                              ? 'bg-amber-50 text-amber-800 border-amber-300'
+                              : 'border-slate-200 text-slate-500 hover:bg-slate-100'
+                          }`}
+                        >
+                          d/dx
+                        </button>
+
+                        {equations.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEquations((prev) => prev.filter((item) => item.id !== eq.id))
+                            }
+                            aria-label="Remove equation"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                      {!syntax.valid && syntax.error && (
+                        <div className="text-[10px] font-semibold text-rose-700 pl-8">
+                          Syntax error: {syntax.error}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Desmos Interactive Parameter Sliders (a, b, c, m, k) */}
@@ -1107,15 +1239,22 @@ export const StudyToolsDrawer: React.FC<StudyToolsDrawerProps> = ({
                           const y1 = evaluateMathFunction(
                             equations[0]?.expr || 'x',
                             xv,
-                            sliderParams
+                            sliderParams,
+                            parsedAngleMode
                           );
                           const dy1 = evaluateDerivative(
                             equations[0]?.expr || 'x',
                             xv,
-                            sliderParams
+                            sliderParams,
+                            parsedAngleMode
                           );
                           const y2 = equations[1]
-                            ? evaluateMathFunction(equations[1].expr, xv, sliderParams)
+                            ? evaluateMathFunction(
+                                equations[1].expr,
+                                xv,
+                                sliderParams,
+                                parsedAngleMode
+                              )
                             : null;
                           return (
                             <tr key={rIdx}>
@@ -1831,16 +1970,18 @@ export const FocusTimerModal: React.FC<FocusTimerModalProps> = ({
     setGeneratingMusic(true);
     setMusicError(null);
     try {
-      const res = await fetch('/api/ai/music', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: musicPrompt, durationType }),
+      const res = await apiFetchWithAuth<{ audioUrl?: string }>('/api/ai/music', {
+        prompt: musicPrompt,
+        durationType,
       });
-      const data = await res.json();
-      if (!res.ok || !data.audioUrl) {
-        throw new Error(data.error || 'Could not generate focus track');
+      if (!res.ok || !res.data.audioUrl) {
+        throw new Error(
+          !res.ok
+            ? `[${res.error.errorCode}] ${res.error.message}`
+            : 'Could not generate focus track'
+        );
       }
-      setAudioUrl(data.audioUrl);
+      setAudioUrl(res.data.audioUrl);
     } catch (err: any) {
       setMusicError(err?.message || 'Failed to generate focus music');
     } finally {
@@ -2066,45 +2207,97 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [turns, isOpen, storageKey]);
 
-  // Connect to /api/live WebSocket
+  const [retryNonce, setRetryNonce] = useState(0);
+  const reconnectTimerRef = useRef<number | null>(null);
+
+  // Connect to /api/live authenticated WebSocket with exponential backoff
   useEffect(() => {
     if (!isOpen) return;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/api/live`);
-    wsRef.current = ws;
-    registerActiveVoiceSocket(ws);
+    let cancelled = false;
+    let activeWs: WebSocket | null = null;
+    let attempt = 0;
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.status === 'connected') {
-          setConnected(true);
-        }
-        if (msg.inputTranscript) {
-          appendWordChunkToTurn('You', msg.inputTranscript);
-        }
-        if (msg.outputTranscript) {
-          appendWordChunkToTurn('Tutor', msg.outputTranscript);
-        }
-        if (msg.interrupted) {
-          handleInterruptSpeech();
-        }
-      } catch {
-        // ignore parse errors
+    const connectSocket = async () => {
+      if (cancelled) return;
+      const token = await getFirebaseIdToken();
+      if (cancelled) return;
+      if (!token) {
+        setStatusError('Sign in required to connect authenticated Live Voice Tutor.');
+        setConnected(false);
+        return;
       }
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/api/live`, [
+        `learnmate-auth.${token}`,
+      ]);
+      activeWs = ws;
+      wsRef.current = ws;
+      registerActiveVoiceSocket(ws);
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.status === 'connected') {
+            attempt = 0;
+            setConnected(true);
+            setStatusError(null);
+          }
+          if (msg.inputTranscript) {
+            appendWordChunkToTurn('You', msg.inputTranscript);
+          }
+          if (msg.outputTranscript) {
+            appendWordChunkToTurn('Tutor', msg.outputTranscript);
+          }
+          if (msg.interrupted) {
+            handleInterruptSpeech();
+          }
+        } catch {
+          // ignore parse errors
+        }
+      };
+
+      ws.onerror = () => {
+        setConnected(false);
+        setStatusError('Authenticated Live Voice connection interrupted.');
+      };
+
+      ws.onclose = (event) => {
+        setConnected(false);
+        if (cancelled) return;
+        if (event.code !== 1000 && event.code !== 1005) {
+          if (attempt < 3) {
+            const delayMs = 1000 * Math.pow(2, attempt);
+            attempt += 1;
+            setStatusError(
+              `Live Voice reconnecting in ${delayMs / 1000}s (attempt ${attempt}/3)...`
+            );
+            reconnectTimerRef.current = window.setTimeout(() => {
+              void connectSocket();
+            }, delayMs);
+          } else {
+            setStatusError(
+              `Live Voice closed (${event.reason || `code ${event.code}`}). Click Retry Connection below.`
+            );
+          }
+        }
+      };
     };
 
-    ws.onerror = () => {
-      setConnected(false);
-    };
+    void connectSocket();
 
     return () => {
-      ws.close();
+      cancelled = true;
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      if (activeWs) activeWs.close();
       stopAllTimersAndSpeech();
       setConnected(false);
       setMicActive(false);
     };
-  }, [isOpen]);
+  }, [isOpen, retryNonce]);
 
   const stopAllTimersAndSpeech = () => {
     if (streamTimerRef.current) {
@@ -2205,7 +2398,7 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
     setAiSpeaking(true);
     let replyText = '';
     try {
-      const { ok, data } = await apiFetchWithAuth<{ text?: string }>(
+      const res = await apiFetchWithAuth<{ text?: string }>(
         '/api/ai/think',
         {
           prompt: spokenUserText,
@@ -2221,15 +2414,15 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
           contextMode: materialContext ? 'strict_material' : 'open_jee',
         }
       );
-      if (!ok || !data.text) {
+      if (!res.ok || !res.data.text) {
         setStatusError(
-          data.message ||
-            `[${data.errorCode || 'AI_SERVICE_UNAVAILABLE'}] Live AI Teacher is temporarily unavailable. Please click Retry.`
+          (!res.ok ? res.error.message : '') ||
+            `[${(!res.ok ? res.error.errorCode : undefined) || 'AI_SERVICE_UNAVAILABLE'}] Live AI Teacher is temporarily unavailable. Please click Retry.`
         );
         setAiSpeaking(false);
         return;
       }
-      replyText = data.text;
+      replyText = res.data.text;
     } catch (err: any) {
       setStatusError(err?.message || 'Network error reaching AI Voice Teacher.');
       setAiSpeaking(false);
@@ -2623,7 +2816,21 @@ export const LiveVoiceTutorModal: React.FC<LiveVoiceTutorModalProps> = ({
           )}
         </div>
 
-        {statusError && <p className="text-xs text-red-600">{statusError}</p>}
+        {statusError && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+            <span>{statusError}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setStatusError(null);
+                setRetryNonce((n) => n + 1);
+              }}
+              className="px-3 py-1 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 cursor-pointer"
+            >
+              Retry Connection
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2713,7 +2920,11 @@ export interface StudentProfileData {
   email: string;
   avatarColor: string;
   targetExam: 'JEE Main 2027' | 'JEE Advanced 2027' | 'NEET UG 2027' | 'BITSAT 2027' | 'JEE Main 2028';
-  preferredLanguage: 'English' | 'Hinglish';
+  preferredLanguage: 'English' | 'Hinglish' | 'Hindi';
+  preferredCurrency?: SupportedCurrency;
+  isMinor?: boolean;
+  guardianEmail?: string;
+  guardianConsentAccepted?: boolean;
   dailyGoalHours: number;
   batchStatus: 'Class 11' | 'Class 12' | 'Dropper';
   coachingName: string;
@@ -2731,6 +2942,7 @@ interface ProfileModalProps {
   onExportUserData: () => void;
   onOpenLegalModal: (tab: LegalModalTabId) => void;
   onSignOut: () => Promise<void>;
+  onDeleteAccountData?: () => Promise<void>;
 }
 
 export const ProfileModal: React.FC<ProfileModalProps> = ({
@@ -2744,6 +2956,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   onExportUserData,
   onOpenLegalModal,
   onSignOut,
+  onDeleteAccountData,
 }) => {
   const [formState, setFormState] = useState<StudentProfileData>(profile);
   const [saving, setSaving] = useState(false);
@@ -2752,10 +2965,13 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     Boolean(getWorkspaceAccessToken())
   );
   const [connectingWorkspace, setConnectingWorkspace] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deletingData, setDeletingData] = useState(false);
 
   useEffect(() => {
     setFormState(profile);
     setWorkspaceConnected(Boolean(getWorkspaceAccessToken()));
+    setConfirmDelete(false);
   }, [profile, isOpen]);
 
   if (!isOpen) return null;
@@ -2912,8 +3128,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
                 Preferred AI Tutor Language
               </label>
-              <div className="grid grid-cols-2 gap-1.5">
-                {(['English', 'Hinglish'] as const).map((l) => (
+              <div className="grid grid-cols-3 gap-1.5">
+                {(['English', 'Hinglish', 'Hindi'] as const).map((l) => (
                   <button
                     key={l}
                     type="button"
@@ -2928,6 +3144,28 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   </button>
                 ))}
               </div>
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                Billing Region &amp; Currency
+              </label>
+              <select
+                value={formState.preferredCurrency || 'INR'}
+                onChange={(e) =>
+                  setFormState((s) => ({
+                    ...s,
+                    preferredCurrency: e.target.value as SupportedCurrency,
+                  }))
+                }
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-semibold"
+              >
+                {Object.values(GLOBAL_PPP_PRICING).map((p) => (
+                  <option key={p.currency} value={p.currency}>
+                    {p.label} ({p.symbol}{p.proMonthly}/mo)
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -2966,7 +3204,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 Daily Self-Study Goal: {formState.dailyGoalHours} hrs / day
               </div>
               <div className="text-[11px] text-slate-500">
-                Used to calibrate your 69-day JEE Main Session 1 revision schedule
+                Used to calibrate your {getDaysToJeeMain2027Session1()}-day JEE Main Session 1 revision schedule
               </div>
             </div>
             <input
@@ -3067,6 +3305,54 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               </button>
             </div>
           </div>
+
+          {onDeleteAccountData && (
+            <div className="p-3.5 rounded-xl border border-rose-200 bg-rose-50/50 dark:bg-rose-950/20 dark:border-rose-900 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="font-bold text-rose-800 dark:text-rose-200">
+                  Right to Erasure (DPDP Act 2023 &amp; GDPR)
+                </div>
+                <p className="text-[11px] text-rose-700/80 dark:text-rose-300/80">
+                  Permanently delete your Firestore subcollections, IndexedDB PDFs, and local workspace caches.
+                </p>
+              </div>
+              {!confirmDelete ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  className="px-3.5 py-2 rounded-xl border border-rose-300 bg-white text-rose-700 font-bold hover:bg-rose-50 cursor-pointer"
+                >
+                  Delete Account &amp; Data
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={deletingData}
+                    onClick={async () => {
+                      setDeletingData(true);
+                      try {
+                        await onDeleteAccountData();
+                        onClose();
+                      } finally {
+                        setDeletingData(false);
+                      }
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-rose-600 text-white font-bold hover:bg-rose-700 cursor-pointer"
+                  >
+                    {deletingData ? 'Erasing...' : 'Confirm Permanent Delete'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(false)}
+                    className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </form>
       </div>
     </div>
@@ -3097,20 +3383,47 @@ export const LegalComplianceModal: React.FC<LegalComplianceModalProps> = ({
   const [reportReference, setReportReference] = useState('');
   const [reportDescription, setReportDescription] = useState('');
   const [reportSubmitted, setReportSubmitted] = useState(false);
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   useEffect(() => {
     setActiveTab(initialTab);
     setReportSubmitted(false);
+    setReportError(null);
   }, [initialTab, isOpen]);
 
   if (!isOpen) return null;
 
-  const handleReportSubmit = (e: React.FormEvent) => {
+  const handleReportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reportDescription.trim()) return;
-    setReportSubmitted(true);
-    setReportDescription('');
-    setReportReference('');
+    if (!reportDescription.trim() || reportDescription.trim().length < 5) {
+      setReportError('Please enter at least 5 characters describing the issue.');
+      return;
+    }
+    setReportError(null);
+    setReportSubmitting(true);
+    try {
+      const mappedType =
+        reportCategory === 'Question Key Discrepancy'
+          ? 'wrong_answer_key'
+          : reportCategory === 'Wrong AI Answer / Hallucination'
+          ? 'typo_or_latex'
+          : 'other';
+      const res = await reportQuestionIssueOnServer({
+        questionId: reportReference.trim() || 'general-support',
+        issueType: mappedType,
+        details: `[${reportCategory}] ${reportDescription.trim()}`,
+      });
+      if (!res.ok) {
+        setReportError(res.error.message || 'Unable to submit report to server.');
+        return;
+      }
+      setReportSubmitted(true);
+      setReportDescription('');
+      setReportReference('');
+    } finally {
+      setReportSubmitting(false);
+    }
   };
 
   return (
@@ -3194,8 +3507,12 @@ export const LegalComplianceModal: React.FC<LegalComplianceModalProps> = ({
               <p>
                 <strong>3. Student Data Rights (Right to Export &amp; Erasure):</strong> Under the
                 Digital Personal Data Protection Act (DPDP Act 2023, India) and GDPR, you have the
-                right to export a complete machine-readable JSON archive of your study data from
-                your Profile Modal at any time, or request account deletion.
+                right to export a complete machine-readable JSON archive of your study data or trigger
+                full erasure directly from your Profile Modal at any time.
+              </p>
+              <p>
+                <strong>4. Minor &amp; Guardian Consent (DPDP Act 2023):</strong> Students under 18
+                require parent/guardian consent; zero behavioral ad-tracking or third-party data brokerage is performed.
               </p>
             </div>
           )}
@@ -3328,16 +3645,22 @@ export const LegalComplianceModal: React.FC<LegalComplianceModalProps> = ({
                   className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
                 />
               </div>
+              {reportError && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 font-semibold">
+                  {reportError}
+                </div>
+              )}
               {reportSubmitted && (
                 <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 font-semibold">
-                  Thank you! Your report has been logged for academic verification.
+                  Thank you! Your report has been logged to Firestore academic review.
                 </div>
               )}
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold cursor-pointer"
+                disabled={reportSubmitting}
+                className="px-5 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] disabled:opacity-50 text-white font-semibold cursor-pointer"
               >
-                Submit Report
+                {reportSubmitting ? 'Submitting...' : 'Submit Report'}
               </button>
             </form>
           )}
@@ -3376,6 +3699,13 @@ export const InstantPracticeModal: React.FC<InstantPracticeModalProps> = ({
   const [qIndex, setQIndex] = useState(0);
   const [selectedOpt, setSelectedOpt] = useState<number | null>(null);
   const [checked, setChecked] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [verifiedKey, setVerifiedKey] = useState<{
+    isCorrect: boolean;
+    correctIndex: number;
+    explanation: string;
+  } | null>(null);
   const [streak, setStreak] = useState(0);
   const [difficultyLevel, setDifficultyLevel] = useState<'Easy' | 'Moderate' | 'JEE Advanced Hard'>(
     'Easy'
@@ -3386,6 +3716,8 @@ export const InstantPracticeModal: React.FC<InstantPracticeModalProps> = ({
     setQIndex(0);
     setSelectedOpt(null);
     setChecked(false);
+    setVerifiedKey(null);
+    setVerifyError(null);
     setStreak(0);
     setDifficultyLevel('Easy');
     setScoreCount(0);
@@ -3398,12 +3730,47 @@ export const InstantPracticeModal: React.FC<InstantPracticeModalProps> = ({
       ? config.customQuestions
       : CBT_MOCK_QUESTIONS.slice(0, 10);
   const currentQ = questionsPool[qIndex] || questionsPool[0];
-  const isCorrect = selectedOpt === currentQ.correctIndex;
+  const resolvedCorrectIndex =
+    verifiedKey?.correctIndex ??
+    (Number.isInteger(currentQ.correctIndex) ? currentQ.correctIndex : -1);
+  const isCorrect = verifiedKey
+    ? verifiedKey.isCorrect
+    : selectedOpt !== null && selectedOpt === resolvedCorrectIndex;
+  const resolvedExplanation = verifiedKey?.explanation || currentQ.explanation || '';
 
-  const handleCheckAnswer = () => {
-    if (selectedOpt === null || checked) return;
+  const handleCheckAnswer = async () => {
+    if (selectedOpt === null || checked || verifying) return;
+    setVerifyError(null);
+
+    let answerIsCorrect = false;
+    let finalCorrectIndex = Number.isInteger(currentQ.correctIndex) ? currentQ.correctIndex : -1;
+    let finalExplanation = currentQ.explanation || '';
+
+    if (finalCorrectIndex < 0) {
+      setVerifying(true);
+      const res = await verifySinglePyqAnswerOnServer({
+        questionId: currentQ.id,
+        selectedOption: selectedOpt,
+      });
+      setVerifying(false);
+      if (!res.ok) {
+        setVerifyError(res.error.message || 'Unable to verify answer against server key.');
+        return;
+      }
+      answerIsCorrect = res.data.isCorrect;
+      finalCorrectIndex = res.data.correctIndex;
+      finalExplanation = res.data.explanation || '';
+      setVerifiedKey({
+        isCorrect: answerIsCorrect,
+        correctIndex: finalCorrectIndex,
+        explanation: finalExplanation,
+      });
+    } else {
+      answerIsCorrect = selectedOpt === finalCorrectIndex;
+    }
+
     setChecked(true);
-    if (selectedOpt === currentQ.correctIndex) {
+    if (answerIsCorrect) {
       const nextStreak = streak + 1;
       setStreak(nextStreak);
       setScoreCount((s) => s + 1);
@@ -3418,7 +3785,14 @@ export const InstantPracticeModal: React.FC<InstantPracticeModalProps> = ({
         setDifficultyLevel('Easy');
       }
       if (onRecordMistake) {
-        onRecordMistake(currentQ, currentQ.options[selectedOpt] || `Option ${selectedOpt + 1}`);
+        onRecordMistake(
+          {
+            ...currentQ,
+            correctIndex: finalCorrectIndex >= 0 ? finalCorrectIndex : 0,
+            explanation: finalExplanation,
+          },
+          currentQ.options[selectedOpt] || `Option ${selectedOpt + 1}`
+        );
       }
     }
   };
@@ -3426,6 +3800,8 @@ export const InstantPracticeModal: React.FC<InstantPracticeModalProps> = ({
   const handleNext = () => {
     setSelectedOpt(null);
     setChecked(false);
+    setVerifiedKey(null);
+    setVerifyError(null);
     setQIndex((idx) => (idx + 1) % questionsPool.length);
   };
 
@@ -3495,9 +3871,9 @@ export const InstantPracticeModal: React.FC<InstantPracticeModalProps> = ({
               if (isSelected && !checked) {
                 borderStyle = 'border-[#4F46E5] bg-[#EEF2FF]/60 text-[#4F46E5]';
               } else if (checked) {
-                if (idx === currentQ.correctIndex) {
+                if (idx === resolvedCorrectIndex) {
                   borderStyle = 'border-emerald-500 bg-emerald-50 text-emerald-900';
-                } else if (isSelected && idx !== currentQ.correctIndex) {
+                } else if (isSelected && idx !== resolvedCorrectIndex) {
                   borderStyle = 'border-red-400 bg-red-50 text-red-900';
                 }
               }
@@ -3514,13 +3890,17 @@ export const InstantPracticeModal: React.FC<InstantPracticeModalProps> = ({
                     <strong>({['A', 'B', 'C', 'D'][idx]})</strong>
                     <MathRichText content={opt} inline />
                   </span>
-                  {checked && idx === currentQ.correctIndex && (
+                  {checked && idx === resolvedCorrectIndex && (
                     <span className="text-[11px] font-bold text-emerald-700">✓ Correct</span>
                   )}
                 </button>
               );
             })}
           </div>
+
+          {verifyError && (
+            <p className="text-xs text-red-600 font-semibold">{verifyError}</p>
+          )}
 
           {checked && (
             <div
@@ -3535,7 +3915,7 @@ export const InstantPracticeModal: React.FC<InstantPracticeModalProps> = ({
                   ? 'Spot On! Step-by-Step Verification:'
                   : 'Conceptual Trap Detected (Logged to My Mistakes Notebook) — Solution Breakdown:'}
               </div>
-              <MathRichText content={currentQ.explanation} className="leading-relaxed" />
+              <MathRichText content={resolvedExplanation} className="leading-relaxed" />
             </div>
           )}
         </div>
@@ -3556,11 +3936,11 @@ export const InstantPracticeModal: React.FC<InstantPracticeModalProps> = ({
             {!checked ? (
               <button
                 type="button"
-                disabled={selectedOpt === null}
+                disabled={selectedOpt === null || verifying}
                 onClick={handleCheckAnswer}
                 className="px-5 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] disabled:opacity-50 text-white text-xs font-semibold cursor-pointer"
               >
-                Check Answer
+                {verifying ? 'Verifying...' : 'Check Answer'}
               </button>
             ) : (
               <button

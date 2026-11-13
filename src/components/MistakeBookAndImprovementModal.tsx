@@ -1,13 +1,15 @@
 import React from 'react';
-import { X, AlertTriangle, CheckCircle2, Target } from 'lucide-react';
+import { X, AlertTriangle, CheckCircle2, Target, RefreshCw } from 'lucide-react';
 import { MistakeNotebookEntry } from './RevisePracticeProgressCBT';
 import { CBTQuestion, ErrorRootCauseTag } from '../utils/jeeEngine';
+import { MathRichText } from './MathRichText';
 
 export interface MistakeBookAndImprovementModalProps {
   isOpen: boolean;
   mistakes: MistakeNotebookEntry[];
   onClose: () => void;
   onTagRootCause: (mistakeId: string, tag: ErrorRootCauseTag) => void;
+  onVerifyMistakeRecheck?: (mistakeId: string, passed: boolean) => void;
   onPracticeMistake: (question: CBTQuestion) => void;
 }
 
@@ -21,7 +23,7 @@ const ROOT_CAUSE_TAGS: ErrorRootCauseTag[] = [
 
 export const MistakeBookAndImprovementModal: React.FC<
   MistakeBookAndImprovementModalProps
-> = ({ isOpen, mistakes, onClose, onTagRootCause, onPracticeMistake }) => {
+> = ({ isOpen, mistakes, onClose, onTagRootCause, onVerifyMistakeRecheck, onPracticeMistake }) => {
   if (!isOpen) return null;
 
   return (
@@ -37,10 +39,10 @@ export const MistakeBookAndImprovementModal: React.FC<
             <AlertTriangle className="w-5 h-5 text-rose-600" />
             <div>
               <h2 className="text-base font-extrabold">
-                Mistake DNA Notebook &amp; Root-Cause Improvement
+                Mistake DNA Notebook &amp; Learning Loop Recheck
               </h2>
               <p className="text-xs text-slate-500">
-                {mistakes.length} logged errors across CBT Mocks &amp; PYQ Drills
+                {mistakes.length} logged errors · Diagnose → Reteach → Recheck → Verify Mastery Delta
               </p>
             </div>
           </div>
@@ -68,24 +70,59 @@ export const MistakeBookAndImprovementModal: React.FC<
                 key={m.id}
                 className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 space-y-2.5"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 font-extrabold text-[10px]">
-                    {m.question.subject} • {m.question.chapter} ({m.source})
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onClose();
-                      onPracticeMistake(m.question);
-                    }}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[11px] cursor-pointer"
-                  >
-                    <Target className="w-3 h-3" />
-                    Re-Attempt Question
-                  </button>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 font-extrabold text-[10px]">
+                      {m.question.subject} • {m.question.chapter} ({m.source})
+                    </span>
+                    {typeof m.masteryDelta === 'number' && m.masteryDelta !== 0 && (
+                      <span
+                        className={`px-2 py-0.5 rounded-md font-extrabold text-[10px] ${
+                          m.masteryDelta > 0
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        Mastery {m.masteryDelta > 0 ? `+${m.masteryDelta}%` : `${m.masteryDelta}%`}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {onVerifyMistakeRecheck && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onVerifyMistakeRecheck(m.id, true)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] cursor-pointer"
+                        >
+                          <CheckCircle2 className="w-3 h-3" />
+                          Pass Recheck (+8%)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onVerifyMistakeRecheck(m.id, false)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-extrabold text-[10px] cursor-pointer"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          Retry 1d
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onPracticeMistake(m.question);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] cursor-pointer"
+                    >
+                      <Target className="w-3 h-3" />
+                      Re-Attempt
+                    </button>
+                  </div>
                 </div>
                 <div className="font-bold text-slate-800 dark:text-slate-100">
-                  {m.question.stem}
+                  <MathRichText content={m.question.stem} />
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 pt-1">
                   <span className="text-[10px] font-bold text-slate-500">Root Cause Tag:</span>

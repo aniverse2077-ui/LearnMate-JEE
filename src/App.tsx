@@ -80,9 +80,9 @@ export function App() {
         customQuestions={s.customCbtConfig?.questions}
         customDurationMinutes={s.customCbtConfig?.durationMinutes}
         customPaperTitle={s.customCbtConfig?.paperTitle}
-        onSubmitMock={(summary, focusEvents) => {
+        onSubmitMock={(summary, focusEvents, questions, responses) => {
           s.setCustomCbtConfig(null);
-          s.handleSubmitCBTMock(summary, focusEvents);
+          s.handleSubmitCBTMock(summary, focusEvents, questions, responses);
         }}
         onExitMock={() => {
           s.setCustomCbtConfig(null);
@@ -305,6 +305,7 @@ export function App() {
             onUpdateSM2Card={s.handleUpdateSM2Card}
             onAddSM2Card={s.handleAddSM2Card}
             onTagMistakeRootCause={s.handleTagMistakeRootCause}
+            onVerifyMistakeRecheck={s.handleVerifyMistakeRecheck}
             onSelectMaterial={(mat) => s.setSelectedMaterial(mat)}
             onOpenAddMaterial={(tab) => {
               s.setAddMaterialInitialTab(tab);
@@ -354,6 +355,7 @@ export function App() {
             lastMockScore={s.lastMockScore}
             materialsCount={s.materials.length}
             mistakesCount={s.mistakesNotebook.length}
+            mistakesNotebook={s.mistakesNotebook}
             sm2CardsCount={s.sm2Cards.length}
           />
         )}
@@ -361,6 +363,7 @@ export function App() {
 
       <DynamicCompanion
         activeChapterName={s.selectedMaterial?.chapter || 'Rotational Motion'}
+        activeMaterialId={s.selectedMaterial?.id}
         onEarnXp={(earned, reason) => {
           s.setXp((x) => x + earned);
           if (reason) s.showToast(reason);
@@ -451,6 +454,7 @@ export function App() {
         onClose={() => s.setProfileModalOpen(false)}
         onSaveProfile={s.handleSaveStudentProfile}
         onExportUserData={s.handleExportAccountData}
+        onDeleteAccountData={s.handleDeleteAccountData}
         onOpenLegalModal={(tab) => {
           s.setProfileModalOpen(false);
           s.handleOpenLegal(tab);
@@ -483,6 +487,7 @@ export function App() {
         mistakes={s.mistakesNotebook}
         onClose={() => s.setMistakeModalOpen(false)}
         onTagRootCause={s.handleTagMistakeRootCause}
+        onVerifyMistakeRecheck={s.handleVerifyMistakeRecheck}
         onPracticeMistake={(q) =>
           s.setInstantPracticeConfig({
             isOpen: true,
@@ -497,9 +502,12 @@ export function App() {
       <AdminCommercialConsoleModal
         isOpen={s.proModalOpen}
         subscriptionTier={s.subscriptionTier}
+        subscriptionStatus={s.subscriptionStatus}
+        paymentsConfigured={s.paymentsConfigured}
+        billingError={s.billingError}
         billingCycle={s.billingCycle}
         onChangeBillingCycle={s.setBillingCycle}
-        onActivatePro={s.handleActivateProTier}
+        onStartCheckout={s.handleStartCheckout}
         onClose={() => s.setProModalOpen(false)}
       />
 

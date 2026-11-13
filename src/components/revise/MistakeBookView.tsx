@@ -4,6 +4,7 @@ import {
   Brain,
   CheckCircle2,
   Play,
+  RefreshCw,
   Sparkles,
   Tag,
   Zap,
@@ -11,6 +12,7 @@ import {
 import { CBTQuestion, ErrorRootCauseTag } from '../../utils/jeeEngine';
 import { MathRichText } from '../MathRichText';
 import { MistakeNotebookEntry } from '../RevisePracticeProgressCBT';
+import { generateConceptMisconceptionDiagnostic } from '../../services/learningLoopService';
 
 const ROOT_CAUSE_TAGS: {
   id: ErrorRootCauseTag;
@@ -57,6 +59,7 @@ interface MistakeBookViewProps {
   onTagRootCause?: (mistakeId: string, rootCause: ErrorRootCauseTag) => void;
   onPracticeQuestion?: (question: CBTQuestion) => void;
   onPracticeMistake?: (question: CBTQuestion) => void;
+  onVerifyMistakeRecheck?: (mistakeId: string, passed: boolean) => void;
   onConvertMistakeToSM2Card?: (entry: MistakeNotebookEntry, rootCause: ErrorRootCauseTag) => void;
 }
 
@@ -67,6 +70,7 @@ export const MistakeBookView: React.FC<MistakeBookViewProps> = ({
   onTagRootCause,
   onPracticeQuestion,
   onPracticeMistake,
+  onVerifyMistakeRecheck,
   onConvertMistakeToSM2Card,
 }) => {
   const allMistakes = mistakesNotebook || mistakes || [];
@@ -77,6 +81,9 @@ export const MistakeBookView: React.FC<MistakeBookViewProps> = ({
   const [filterSubject, setFilterSubject] = useState<
     'All' | 'Physics' | 'Chemistry' | 'Mathematics'
   >('All');
+  const [activeReteachId, setActiveReteachId] = useState<string | null>(null);
+  const [recheckSelectionById, setRecheckSelectionById] = useState<Record<string, number>>({});
+  const [recheckFeedbackById, setRecheckFeedbackById] = useState<Record<string, 'passed' | 'failed'>>({});
 
   const filtered = allMistakes.filter((m) => {
     const matchesSubj = filterSubject === 'All' || m.question.subject === filterSubject;
@@ -103,7 +110,7 @@ export const MistakeBookView: React.FC<MistakeBookViewProps> = ({
             )}
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Tag error root causes to schedule targeted spaced-repetition review.
+            Tag error root causes, run a 2-step targeted reteach, and pass concept rechecks to schedule SM-2 mastery.
           </p>
         </div>
 
@@ -166,7 +173,7 @@ export const MistakeBookView: React.FC<MistakeBookViewProps> = ({
             No mistakes logged in this filter yet
           </div>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Attempt questions in the 75-Q NTA CBT Mock or Official PYQ Bank. Any incorrect or skipped question will automatically appear here for Root-Cause tagging and SM-2 scheduling.
+            Attempt questions in the 75-Q NTA CBT Mock or Official PYQ Bank. Any incorrect or skipped question will automatically appear here for Root-Cause tagging, targeted reteaching, and SM-2 scheduling.
           </p>
         </div>
       ) : (
@@ -174,6 +181,16 @@ export const MistakeBookView: React.FC<MistakeBookViewProps> = ({
           {filtered.map((entry) => {
             const activeCause = entry.rootCauseTag;
             const causeMeta = ROOT_CAUSE_TAGS.find((t) => t.id === activeCause);
+            const diagnosis = generateConceptMisconceptionDiagnostic({
+              subject: entry.question.subject,
+              chapter: entry.question.chapter,
+              rootCause: activeCause,
+              stem: entry.question.stem,
+              userAnswer: entry.userAnswer,
+            });
+            const isReteachOpen = activeReteachId === entry.id;
+            const chosenCheck = recheckSelectionById[entry.id];
+            const checkFeedback = recheckFeedbackById[entry.id];
             return (
               <div
                 key={entry.id}
@@ -201,17 +218,145 @@ export const MistakeBookView: React.FC<MistakeBookViewProps> = ({
                         Tag Root Cause Required
                       </span>
                     )}
+                    {typeof entry.masteryDelta === 'number' && entry.masteryDelta !== 0 && (
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[11px] font-extrabold ${
+                          entry.masteryDelta > 0
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        Mastery {entry.masteryDelta > 0 ? `+${entry.masteryDelta}%` : `${entry.masteryDelta}%`}
+                      </span>
+                    )}
+                    {entry.nextDueIso && (
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 text-[10px] font-bold">
+                        Next Due: {new Date(entry.nextDueIso).toLocaleDateString()}
+                      </span>
+                    )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handlePracticeQ(entry.question)}
-                    className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Play className="w-3.5 h-3.5" />
-                    Re-Attempt Question
-                  </button>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setActiveReteachId(isReteachOpen ? null : entry.id)}
+                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer border ${
+                        isReteachOpen
+                          ? 'border-indigo-600 bg-indigo-50 text-indigo-800'
+                          : 'border-indigo-200 bg-white dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50'
+                      }`}
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      {isReteachOpen ? 'Hide Reteach' : 'Targeted Reteach & Recheck'}
+                    </button>
+                    {onVerifyMistakeRecheck && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onVerifyMistakeRecheck(entry.id, true)}
+                          className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Pass Recheck (+8%)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onVerifyMistakeRecheck(entry.id, false)}
+                          className="px-2.5 py-1.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          Retry 1d
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handlePracticeQ(entry.question)}
+                      className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      Re-Attempt Question
+                    </button>
+                  </div>
                 </div>
+
+                {/* Targeted Misconception Diagnosis + 2-Step Reteach & Concept Recheck */}
+                {isReteachOpen && (
+                  <div className="p-4 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 space-y-3 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-extrabold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                        <Zap className="w-4 h-4 text-indigo-600" />
+                        <span>Misconception Diagnosis: {diagnosis.headline}</span>
+                      </div>
+                      <span className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300">
+                        Likely Trap: {diagnosis.likelyTrap}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      {diagnosis.reteachSteps.map((step, sIdx) => (
+                        <div
+                          key={sIdx}
+                          className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-indigo-100 dark:border-indigo-900"
+                        >
+                          <span className="font-extrabold text-indigo-700 dark:text-indigo-300 block mb-0.5">
+                            Reteach Step {sIdx + 1}
+                          </span>
+                          <MathRichText content={step} />
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="pt-2 border-t border-indigo-200/70 dark:border-indigo-800 space-y-2">
+                      <div className="font-bold text-slate-900 dark:text-white">
+                        Quick Recheck: {diagnosis.recheckPrompt}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {diagnosis.recheckChoices.map((choice, cIdx) => {
+                          const picked = chosenCheck === cIdx;
+                          const isCorrectChoice = cIdx === diagnosis.correctChoiceIndex;
+                          return (
+                            <button
+                              key={cIdx}
+                              type="button"
+                              onClick={() => {
+                                setRecheckSelectionById((prev) => ({ ...prev, [entry.id]: cIdx }));
+                                const passed = cIdx === diagnosis.correctChoiceIndex;
+                                setRecheckFeedbackById((prev) => ({
+                                  ...prev,
+                                  [entry.id]: passed ? 'passed' : 'failed',
+                                }));
+                                if (onVerifyMistakeRecheck) {
+                                  onVerifyMistakeRecheck(entry.id, passed);
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded-lg border text-left font-semibold cursor-pointer ${
+                                picked
+                                  ? isCorrectChoice
+                                    ? 'border-emerald-600 bg-emerald-600 text-white'
+                                    : 'border-rose-500 bg-rose-600 text-white'
+                                  : 'border-indigo-200 dark:border-indigo-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 hover:border-indigo-500'
+                              }`}
+                            >
+                              {choice}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {checkFeedback && (
+                        <div
+                          className={`font-extrabold ${
+                            checkFeedback === 'passed' ? 'text-emerald-700' : 'text-amber-700'
+                          }`}
+                        >
+                          {checkFeedback === 'passed'
+                            ? 'Recheck passed! Mastery updated (+8%) and SM-2 interval expanded.'
+                            : 'Not quite — review Reteach Steps 1–2 above; card reset to 1-day SM-2 interval.'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Question Stem */}
                 <div className="text-sm font-medium text-slate-900 dark:text-slate-100 leading-relaxed">

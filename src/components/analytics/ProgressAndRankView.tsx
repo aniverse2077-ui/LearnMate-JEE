@@ -12,11 +12,14 @@ import {
 } from 'lucide-react';
 import { predictNtaPercentileAndAir, ExamTrack } from '../../utils/jeeEngine';
 import { JEE_SYLLABUS_DATA } from '../../data/jeeInitialContent';
+import { getDaysToJeeMain2027Session1 } from '../../config/examSpecs';
+import type { MistakeNotebookEntry } from '../RevisePracticeProgressCBT';
 
 interface ProgressAndRankViewProps {
   lastMockScore: number | null;
   materialsCount: number;
   mistakesCount: number;
+  mistakesNotebook?: MistakeNotebookEntry[];
   sm2CardsCount?: number;
   completedChapterIds?: string[];
   onStartCBTMock: (mode?: ExamTrack) => void;
@@ -28,6 +31,8 @@ export const ProgressAndRankView: React.FC<ProgressAndRankViewProps> = ({
   lastMockScore,
   materialsCount,
   mistakesCount,
+  mistakesNotebook = [],
+  sm2CardsCount = 0,
   completedChapterIds = [],
   onStartCBTMock,
   onOpenCustomTestGenerator,
@@ -58,14 +63,44 @@ export const ProgressAndRankView: React.FC<ProgressAndRankViewProps> = ({
     [heatmapSubject]
   );
 
+  const masteryStats = useMemo(() => {
+    const totalChapters = Math.max(1, JEE_SYLLABUS_DATA.length);
+    const syllabusCoveragePct = Number(((completedChapterIds.length / totalChapters) * 100).toFixed(1));
+    const recheckedPassed = mistakesNotebook.filter((m) => m.recheckPassed).length;
+    const recheckResolutionPct =
+      mistakesNotebook.length > 0
+        ? Math.round((recheckedPassed / mistakesNotebook.length) * 100)
+        : 100;
+    const netNegativeBleed = Math.max(0, mistakesCount - recheckedPassed);
+    const weightedMasteryPct = Math.min(
+      100,
+      Math.round(
+        syllabusCoveragePct * 0.45 +
+          (lastMockScore !== null ? Math.max(0, Math.min(100, (lastMockScore / 300) * 100)) * 0.35 : 0) +
+          (mistakesNotebook.length > 0 ? recheckResolutionPct * 0.2 : 0)
+      )
+    );
+    return {
+      syllabusCoveragePct,
+      recheckedPassed,
+      recheckResolutionPct,
+      netNegativeBleed,
+      weightedMasteryPct,
+      daysToExam: getDaysToJeeMain2027Session1(),
+    };
+  }, [completedChapterIds.length, lastMockScore, mistakesCount, mistakesNotebook]);
+
   return (
-    <div className="w-full px-6 lg:px-10 xl:px-12 py-6 space-y-6">
+    <div className="w-full px-4 sm:px-6 lg:px-10 xl:px-12 py-6 space-y-6">
       {/* Top Banner */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white">
             Progress &amp; Rank Predictor
           </h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {masteryStats.daysToExam} days remaining to JEE Main 2027 Session 1 • Weighted Mastery: {masteryStats.weightedMasteryPct}%
+          </p>
         </div>
         <div className="flex items-center gap-2.5">
           {onOpenCustomTestGenerator && (
@@ -167,29 +202,33 @@ export const ProgressAndRankView: React.FC<ProgressAndRankViewProps> = ({
           </div>
         </div>
 
-        {/* Right: Negative Marking Bleed & Telemetry */}
+        {/* Right: Adaptive Mastery & Negative Marking Bleed Telemetry */}
         <div className="lg:col-span-5 p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between space-y-4">
           <div>
             <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
-              Workspace &amp; Negative-Marking Bleed Telemetry
+              Adaptive Mastery &amp; Negative-Marking Telemetry
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Track uploaded study bundles, Mistake Book root causes, and syllabus coverage
+              Measured from completed syllabus chapters, SM-2 recall deck, and verified Mistake Rechecks
             </p>
           </div>
 
-          <div className="space-y-3 text-xs">
+          <div className="space-y-2.5 text-xs">
             <div className="flex items-center justify-between p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800">
-              <span className="font-bold text-slate-600 dark:text-slate-300">Uploaded Study Bundles</span>
-              <span className="font-extrabold text-indigo-600">{materialsCount}</span>
+              <span className="font-bold text-slate-600 dark:text-slate-300">Syllabus Mastery ({completedChapterIds.length}/{JEE_SYLLABUS_DATA.length} Chapters)</span>
+              <span className="font-extrabold text-emerald-600">{masteryStats.syllabusCoveragePct}% ({sm2CardsCount} SM-2 Cards)</span>
             </div>
             <div className="flex items-center justify-between p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800">
-              <span className="font-bold text-slate-600 dark:text-slate-300">Mistake Book Questions Logged</span>
-              <span className="font-extrabold text-rose-600">{mistakesCount} Qs (-{mistakesCount} Marks Bleed)</span>
+              <span className="font-bold text-slate-600 dark:text-slate-300">Mistake Book Rechecks Passed</span>
+              <span className="font-extrabold text-indigo-600">
+                {masteryStats.recheckedPassed}/{mistakesNotebook.length} ({masteryStats.recheckResolutionPct}%)
+              </span>
             </div>
             <div className="flex items-center justify-between p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800">
-              <span className="font-bold text-slate-600 dark:text-slate-300">Official NTA Syllabus Chapters</span>
-              <span className="font-extrabold text-emerald-600">{JEE_SYLLABUS_DATA.length} Chapters (20P • 20C • 18M)</span>
+              <span className="font-bold text-slate-600 dark:text-slate-300">Active Negative-Mark Bleed ({materialsCount} Bundles)</span>
+              <span className="font-extrabold text-rose-600">
+                {mistakesCount} Logged • -{masteryStats.netNegativeBleed} Net Bleed
+              </span>
             </div>
           </div>
 

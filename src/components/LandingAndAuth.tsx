@@ -18,6 +18,11 @@ import {
   Headphones,
 } from 'lucide-react';
 import { googleSignIn, emailSignIn, emailSignUp } from '../firebase';
+import {
+  getDaysToJeeMain2027Session1,
+  GLOBAL_PPP_PRICING,
+  SupportedCurrency,
+} from '../config/examSpecs';
 
 export type LegalModalTabId = 'privacy' | 'terms' | 'ai-safety' | 'google-api' | 'contact';
 
@@ -27,7 +32,10 @@ interface LandingPageProps {
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onOpenLegal }) => {
-  const [sampleLang, setSampleLang] = useState<'English' | 'Hinglish'>('English');
+  const [sampleLang, setSampleLang] = useState<'English' | 'Hinglish' | 'Hindi'>('English');
+  const [currency, setCurrency] = useState<SupportedCurrency>('INR');
+  const daysToJee2027 = getDaysToJeeMain2027Session1();
+  const activePricing = GLOBAL_PPP_PRICING[currency];
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [quickQuestion, setQuickQuestion] = useState<string>('');
   const [quickAnswer, setQuickAnswer] = useState<string>('');
@@ -53,17 +61,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onOpenLega
     if (!quickQuestion.trim()) return;
     setQuickLoading(true);
     try {
-      const res = await fetch('/api/ai/fast', {
+      const res = await fetch('/api/public/sample-question', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: quickQuestion,
           language: sampleLang,
-          context: 'Landing page JEE sample preview',
         }),
       });
       const data = await res.json();
-      setQuickAnswer(data.text || 'Sign in to explore full step-by-step JEE derivations.');
+      if (!res.ok) {
+        setQuickAnswer(data?.message || 'Sign in to access the full JEE AI Tutor.');
+      } else {
+        setQuickAnswer(data.text || 'Sign in to explore full step-by-step JEE derivations.');
+      }
     } catch {
       setQuickAnswer('Sign in to access the full JEE AI Tutor.');
     } finally {
@@ -125,7 +136,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onOpenLega
                 JEE Main 2027 · Session 1
               </span>
               <span className="inline-flex items-center px-3 py-1 rounded-full bg-slate-50 text-slate-600 text-xs font-medium border border-slate-200">
-                69 days to JEE Main Session 1
+                {daysToJee2027} days to JEE Main Session 1
               </span>
             </div>
 
@@ -135,7 +146,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onOpenLega
             </h1>
 
             <p className="text-slate-600 text-base sm:text-lg leading-relaxed max-w-xl">
-              Bring your own chapter. Learn it step by step in English or Hinglish, check yourself
+              Bring your own chapter. Learn it step by step in English, Hinglish, or Hindi, check yourself
               with JEE-style questions, then revise only what you keep getting wrong.
             </p>
 
@@ -148,11 +159,33 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onOpenLega
                 <span>Create free account</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
+              <div className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs">
+                <label htmlFor="landing-currency-select" className="font-semibold text-slate-600">
+                  Global PPP:
+                </label>
+                <select
+                  id="landing-currency-select"
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value as SupportedCurrency)}
+                  className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
+                >
+                  {(Object.keys(GLOBAL_PPP_PRICING) as SupportedCurrency[]).map((code) => (
+                    <option key={code} value={code}>
+                      {code} ({GLOBAL_PPP_PRICING[code].symbol}
+                      {GLOBAL_PPP_PRICING[code].proMonthly}/mo)
+                    </option>
+                  ))}
+                </select>
+                <span className="text-slate-500 hidden sm:inline">
+                  Pro {activePricing.symbol}
+                  {activePricing.proMonthly}/mo
+                </span>
+              </div>
             </div>
 
             <div className="flex items-center gap-2 text-xs text-slate-500 pt-1">
               <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              <span>No card needed. No ads. Your material stays private to your account.</span>
+              <span>Free starter tier included. No ads. Your material stays private to your account.</span>
             </div>
           </div>
 
@@ -171,6 +204,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onOpenLega
               <p className="text-sm text-slate-700 leading-relaxed">
                 {sampleLang === 'English'
                   ? 'If B has already happened, how likely is A? The sample space shrinks from every outcome to just B.'
+                  : sampleLang === 'Hindi'
+                  ? 'यदि घटना B पहले ही घटित हो चुकी है, तो घटना A के होने की प्रायिकता क्या होगी? प्रतिदर्श समष्टि सिकुड़कर केवल B रह जाती है।'
                   : 'Agar event B pehle hi ho chuka hai, toh A hone ki probability kya hogi? Sample space shrink hokar sirf B reh jaata hai.'}
               </p>
 
@@ -184,6 +219,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onOpenLega
                   <span>
                     {sampleLang === 'English'
                       ? 'Division by the condition, not by P(A).'
+                      : sampleLang === 'Hindi'
+                      ? 'हमेशा दी गई शर्त P(B) से भाग दें, P(A) से नहीं।'
                       : 'Hamesha given condition P(B) se divide karein, P(A) se nahi.'}
                   </span>
                 </div>
@@ -192,6 +229,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onOpenLega
                   <span>
                     {sampleLang === 'English'
                       ? 'P(A | B) and P(B | A) are different.'
+                      : sampleLang === 'Hindi'
+                      ? 'P(A | B) और P(B | A) का मान अलग होता है।'
                       : 'P(A | B) aur P(B | A) bilkul alag hote hain.'}
                   </span>
                 </div>
@@ -209,35 +248,28 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onOpenLega
               </div>
             </div>
 
-            {/* Floating English / Hinglish Toggle Pill */}
+            {/* Floating English / Hinglish / Hindi Toggle */}
             <div className="mt-4 sm:mt-0 sm:absolute sm:-bottom-2 sm:-left-6 bg-white border border-slate-200 shadow-md rounded-xl px-3.5 py-2.5 flex items-center gap-2.5">
               <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center">
                 <Languages className="w-4 h-4" />
               </div>
               <div className="flex items-center gap-1 text-xs font-medium">
-                <button
-                  type="button"
-                  onClick={() => setSampleLang('English')}
-                  className={`px-2 py-0.5 rounded cursor-pointer ${
-                    sampleLang === 'English'
-                      ? 'font-bold text-slate-900 bg-slate-100'
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  English
-                </button>
-                <span className="text-slate-300">/</span>
-                <button
-                  type="button"
-                  onClick={() => setSampleLang('Hinglish')}
-                  className={`px-2 py-0.5 rounded cursor-pointer ${
-                    sampleLang === 'Hinglish'
-                      ? 'font-bold text-slate-900 bg-slate-100'
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  Hinglish
-                </button>
+                {(['English', 'Hinglish', 'Hindi'] as const).map((lang, i) => (
+                  <React.Fragment key={lang}>
+                    {i > 0 && <span className="text-slate-300">/</span>}
+                    <button
+                      type="button"
+                      onClick={() => setSampleLang(lang)}
+                      className={`px-2 py-0.5 rounded cursor-pointer ${
+                        sampleLang === lang
+                          ? 'font-bold text-slate-900 bg-slate-100'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      {lang}
+                    </button>
+                  </React.Fragment>
+                ))}
               </div>
             </div>
           </div>
@@ -483,8 +515,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isUnder18, setIsUnder18] = useState(false);
+  const [guardianEmail, setGuardianEmail] = useState('');
+  const [guardianConsent, setGuardianConsent] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const daysToJee2027 = getDaysToJeeMain2027Session1();
 
   const handleGoogleLogin = async () => {
     setErrorMsg(null);
@@ -520,10 +556,27 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       setErrorMsg('Please enter your full name.');
       return;
     }
+    if (mode === 'signup' && isUnder18 && (!guardianEmail.trim() || !guardianConsent)) {
+      setErrorMsg('Under India DPDP Act 2023 / GDPR, minors under 18 require a parent/guardian email and consent.');
+      return;
+    }
     setLoading(true);
     try {
       if (mode === 'signup') {
         await emailSignUp(name, email, password);
+        try {
+          localStorage.setItem(
+            'learnmate_signup_consent_v1',
+            JSON.stringify({
+              isMinor: isUnder18,
+              guardianEmail: guardianEmail.trim(),
+              guardianConsentGranted: isUnder18 ? guardianConsent : true,
+              recordedAtIso: new Date().toISOString(),
+            })
+          );
+        } catch {
+          // ignore storage error
+        }
       } else {
         await emailSignIn(email, password);
       }
@@ -568,7 +621,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5">
                 <Languages className="w-4 h-4" />
               </div>
-              <span>Step-by-step explanations in English or Hinglish.</span>
+              <span>Step-by-step explanations in English, Hinglish, or Hindi.</span>
             </div>
             <div className="flex items-start gap-3">
               <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 mt-0.5">
@@ -580,7 +633,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
           <div className="pt-2">
             <span className="inline-block px-3.5 py-1.5 rounded-full bg-white/15 border border-white/20 text-xs font-semibold">
-              69 days to JEE Main Session 1
+              {daysToJee2027} days to JEE Main 2027 Session 1
             </span>
           </div>
         </div>
@@ -690,6 +743,42 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               />
             </div>
           </div>
+
+          {mode === 'signup' && (
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5 text-xs">
+              <label className="flex items-center gap-2 font-semibold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isUnder18}
+                  onChange={(e) => setIsUnder18(e.target.checked)}
+                  className="rounded accent-indigo-600"
+                />
+                <span>I am under 18 years old (parent / guardian consent required)</span>
+              </label>
+              {isUnder18 && (
+                <div className="space-y-2 pl-1">
+                  <input
+                    type="email"
+                    value={guardianEmail}
+                    onChange={(e) => setGuardianEmail(e.target.value)}
+                    placeholder="Parent / Guardian email address"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white focus:outline-none focus:border-[#4F46E5]"
+                  />
+                  <label className="flex items-start gap-2 text-[11px] text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={guardianConsent}
+                      onChange={(e) => setGuardianConsent(e.target.checked)}
+                      className="mt-0.5 rounded accent-indigo-600"
+                    />
+                    <span>
+                      Parent / Guardian consents to private study workspace processing under India DPDP Act 2023 &amp; GDPR.
+                    </span>
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
 
           {errorMsg && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700">

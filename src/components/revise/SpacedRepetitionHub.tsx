@@ -28,6 +28,7 @@ interface SpacedRepetitionHubProps {
   onTagMistakeRootCause?: (mistakeId: string, rootCause: ErrorRootCauseTag) => void;
   onPracticeMistake?: (question: CBTQuestion) => void;
   onPracticeQuestion?: (question: CBTQuestion) => void;
+  onVerifyMistakeRecheck?: (mistakeId: string, passed: boolean) => void;
   showToast?: (msg: string) => void;
 }
 
@@ -43,15 +44,17 @@ export const SpacedRepetitionHub: React.FC<SpacedRepetitionHubProps> = ({
   onTagMistakeRootCause,
   onPracticeMistake,
   onPracticeQuestion,
+  onVerifyMistakeRecheck,
   showToast,
 }) => {
-  const [subMode, setSubMode] = useState<'neuronz_queue' | 'mistake_book'>('neuronz_queue');
+  const dueCards = sm2Cards || cards || [];
+  const allMistakes = mistakes || mistakesNotebook || [];
+  const [subMode, setSubMode] = useState<'neuronz_queue' | 'mistake_book'>(
+    allMistakes.length > 0 && dueCards.length === 0 ? 'mistake_book' : 'neuronz_queue'
+  );
   const [activeIndex, setActiveIndex] = useState<number>(0);
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
   const [reviewedTodayCount, setReviewedTodayCount] = useState<number>(0);
-
-  const dueCards = sm2Cards || cards || [];
-  const allMistakes = mistakes || mistakesNotebook || [];
   const activeCard = dueCards[activeIndex % Math.max(1, dueCards.length)] || null;
 
   const handleUpdateCard = onUpdateSM2Card || onUpdateCardSchedule;
@@ -133,6 +136,7 @@ export const SpacedRepetitionHub: React.FC<SpacedRepetitionHubProps> = ({
           onTagRootCause={(id, cause) => {
             if (onTagMistakeRootCause) onTagMistakeRootCause(id, cause);
           }}
+          onVerifyMistakeRecheck={onVerifyMistakeRecheck}
           onPracticeMistake={handlePractice}
           onConvertMistakeToSM2Card={(entry, rootCause) => {
             if (handleAddCard) {

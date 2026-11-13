@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   db,
+  isFirebaseConfigured,
   initAuth,
   logoutUser,
   handleFirestoreError,
@@ -15,6 +16,7 @@ import {
   onSnapshot,
   query,
   orderBy,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { LegalModalTabId } from '../components/LandingAndAuth';
 import {
@@ -39,12 +41,23 @@ import {
   SM2FlashcardItem,
   ErrorRootCauseTag,
   ExamTrack,
+  QuestionResponseState,
 } from '../utils/jeeEngine';
 import {
   clearAllIndexedDbDocuments,
+  createBillingCheckoutSession,
+  deleteAccountOnServer,
+  fetchCommercialEntitlements,
+  ingestDocumentOnServer,
+  purgeUserFirestoreData,
   syncChunkedMaterialToFirestore,
   syncRevisionStateToFirestore,
 } from '../services/workspaceService';
+import { runOneTimeTenantMigration } from '../services/migrationService';
+import {
+  buildLearningLoopDiagnosis,
+  verifyMistakeRecheckAndSchedule,
+} from '../services/learningLoopService';
 
 export type PrimaryTab = 'Home' | 'Study' | 'Practice' | 'Revise' | 'Progress';
 export type StudySubTabId =
@@ -68,7 +81,10 @@ export function useLearnMateAppState() {
   const [cbtExamMode, setCbtExamMode] = useState<ExamTrack>('JEE Main');
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
 
-  const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'pro'>('free');
+  const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'pro' | 'institute'>('free');
+  const [subscriptionStatus, setSubscriptionStatus] = useState<string>('active');
+  const [paymentsConfigured, setPaymentsConfigured] = useState<boolean>(false);
+  const [billingError, setBillingError] = useState<string | null>(null);
   const [proModalOpen, setProModalOpen] = useState<boolean>(false);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('annual');
   const [questionBankModalOpen, setQuestionBankModalOpen] = useState<boolean>(false);
@@ -144,36 +160,60 @@ export function useLearnMateAppState() {
     setLegalModalState({ isOpen: true, tab });
   };
 
+  // Load UID-scoped study caches & query server-authoritative subscription entitlements
   useEffect(() => {
     if (!currentUser) {
       setMistakesNotebook([]);
       setSm2Cards([]);
       setSubscriptionTier('free');
+      setSubscriptionStatus('active');
+      setBillingError(null);
       return;
     }
+
+    runOneTimeTenantMigration(currentUser.uid).catch(() => {});
+
     try {
       const mRaw = localStorage.getItem(`learnmate_${currentUser.uid}_mistakes_notebook`);
       if (mRaw) setMistakesNotebook(JSON.parse(mRaw));
       const cRaw = localStorage.getItem(`learnmate_${currentUser.uid}_sm2_cards`);
       if (cRaw) setSm2Cards(JSON.parse(cRaw));
-      const tierRaw = localStorage.getItem(`learnmate_${currentUser.uid}_subscription_tier`);
-      if (tierRaw === 'pro' || tierRaw === 'free') setSubscriptionTier(tierRaw);
     } catch {
       // ignore storage errors
     }
+
+    fetchCommercialEntitlements().then((res) => {
+      if (res.ok && res.data) {
+        setSubscriptionTier(res.data.tier || 'free');
+        setSubscriptionStatus(res.data.status || 'active');
+        setPaymentsConfigured(Boolean(res.data.paymentsConfigured));
+      } else {
+        setSubscriptionTier('free');
+        setPaymentsConfigured(false);
+      }
+    });
   }, [currentUser?.uid]);
 
-  const handleActivateProTier = () => {
-    setSubscriptionTier('pro');
-    setProModalOpen(false);
-    if (currentUser) {
-      try {
-        localStorage.setItem(`learnmate_${currentUser.uid}_subscription_tier`, 'pro');
-      } catch {
-        // ignore
-      }
+  /**
+   * Authoritative Billing Checkout flow: NEVER upgrades tier client-side in localStorage.
+   * Honestly reports PAYMENTS_NOT_CONFIGURED (503) when gateway keys are absent.
+   */
+  const handleStartCheckout = async (planId: 'pro_aspirant' | 'institute_cohort' = 'pro_aspirant') => {
+    setBillingError(null);
+    const res = await createBillingCheckoutSession({
+      planId,
+      billingCycle,
+    });
+    if (!res.ok) {
+      const msg =
+        res.error.errorCode === 'PAYMENTS_NOT_CONFIGURED'
+          ? 'Payment gateway is not configured in this deployment environment yet. Upgrades only activate after verified payment webhooks.'
+          : res.error.message;
+      setBillingError(msg);
+      showToast(msg);
+      return;
     }
-    showToast('Upgraded to LearnMate Pro Aspirant! Unlimited AI Scans, 3D Labs & CBT Mocks unlocked.');
+    showToast(`Checkout session created (${res.data.sessionId}). Awaiting verified payment completion.`);
   };
 
   const handleRecordMistake = (
@@ -189,6 +229,8 @@ export function useLearnMateAppState() {
         userAnswer,
         loggedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         source,
+        recheckCount: 0,
+        masteryDelta: 0,
       };
       const next = [entry, ...prev];
       if (currentUser) {
@@ -224,6 +266,65 @@ export function useLearnMateAppState() {
       }
       return next;
     });
+  };
+
+  const handleVerifyMistakeRecheck = (mistakeId: string, passed: boolean) => {
+    setMistakesNotebook((prev) => {
+      const next = prev.map((m) => {
+        if (m.id !== mistakeId) return m;
+        const diagnosed = verifyMistakeRecheckAndSchedule(
+          {
+            id: m.id,
+            questionId: m.question.id,
+            subject: m.question.subject,
+            chapter: m.question.chapter,
+            stem: m.question.stem,
+            explanation: m.question.explanation,
+            userAnswer: m.userAnswer,
+            correctAnswer:
+              m.question.options?.[m.question.correctIndex] ||
+              String(m.question.numericalAnswer ?? ''),
+            timeSpentSec: 60,
+            rootCause: m.rootCauseTag || 'Conceptual Gap',
+            rechecked: Boolean(m.recheckCount && m.recheckCount > 0),
+            recheckPassed: Boolean(m.recheckPassed),
+            nextDueIso: m.nextDueIso || new Date().toISOString(),
+            repetitions: m.recheckCount || 0,
+            intervalDays: m.intervalDays || 1,
+            easeFactor: 2.5,
+            masteryDelta: m.masteryDelta || 0,
+          },
+          passed
+        );
+        return {
+          ...m,
+          recheckCount: diagnosed.repetitions,
+          recheckPassed: diagnosed.recheckPassed,
+          nextDueIso: diagnosed.nextDueIso,
+          intervalDays: diagnosed.intervalDays,
+          masteryDelta: diagnosed.masteryDelta,
+        };
+      });
+      if (currentUser) {
+        try {
+          localStorage.setItem(
+            `learnmate_${currentUser.uid}_mistakes_notebook`,
+            JSON.stringify(next)
+          );
+        } catch {
+          // ignore
+        }
+        syncRevisionStateToFirestore('mistakes', next);
+      }
+      return next;
+    });
+
+    if (passed) {
+      setXp((x) => x + 20);
+      showToast('Recheck passed! Mastery +8% & SM-2 interval extended (+20 XP).');
+    } else {
+      showToast('Marked for re-review tomorrow in SM-2 spaced repetition.');
+    }
   };
 
   const handleUpdateSM2Card = (updatedCard: SM2FlashcardItem) => {
@@ -274,10 +375,25 @@ export function useLearnMateAppState() {
     setXp(0);
     setLevel(1);
     setLastMockScore(null);
+    setSubscriptionTier('free');
     await clearAllIndexedDbDocuments();
     await logoutUser(uid);
     setCurrentUser(null);
     setUnauthScreen('landing');
+  };
+
+  const handleDeleteAccountData = async () => {
+    const uid = currentUser?.uid;
+    const serverDel = await deleteAccountOnServer();
+    if (uid) {
+      await purgeUserFirestoreData(uid);
+    }
+    await handleSignOutAndPurgeAll();
+    if (serverDel.ok) {
+      showToast('Your Firebase Auth account, cloud storage, and local workspace data have been permanently erased.');
+    } else {
+      showToast('Local workspace purged. Sign in with Firebase Auth to erase server-side cloud records.');
+    }
   };
 
   useEffect(() => {
@@ -309,13 +425,16 @@ export function useLearnMateAppState() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const isAutoStart = params.get('autostart') === '1' || params.get('dev_guest') === '1';
+    const isAutoStart =
+      !import.meta.env.PROD &&
+      (params.get('autostart') === '1' || params.get('dev_guest') === '1');
 
     if (isAutoStart) {
       setCurrentUser({
         uid: 'local_autostart_student',
         displayName: 'JEE Aspirant',
         email: 'aspirant@learnmate.jee',
+        emailVerified: true,
       } as FirebaseUser);
       setAuthLoading(false);
     }
@@ -340,7 +459,7 @@ export function useLearnMateAppState() {
           }
         }
 
-        if (user.uid.startsWith('local_')) {
+        if (user.uid.startsWith('local_') || !isFirebaseConfigured || !db) {
           setStudentProfile((prev) => ({
             ...prev,
             ...localParsed,
@@ -358,9 +477,11 @@ export function useLearnMateAppState() {
         try {
           const snap = await getDoc(userRef);
           if (!snap.exists()) {
-            const now = new Date().toISOString();
-            const defaultName =
-              user.displayName || user.email?.split('@')[0] || 'JEE Aspirant';
+            const defaultName = (
+              user.displayName ||
+              user.email?.split('@')[0] ||
+              'JEE Aspirant'
+            ).slice(0, 95);
             await setDoc(userRef, {
               userId: user.uid,
               displayName: defaultName,
@@ -373,8 +494,8 @@ export function useLearnMateAppState() {
               physicsMastery: 0,
               chemistryMastery: 0,
               mathsMastery: 0,
-              createdAt: now,
-              updatedAt: now,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
             });
             setStudentProfile((prev) => ({
               ...prev,
@@ -407,7 +528,10 @@ export function useLearnMateAppState() {
             if (typeof data.level === 'number') setLevel(data.level);
             if (typeof data.streakDays === 'number') setStreakDays(data.streakDays);
           }
-        } catch (err) {
+        } catch (err: any) {
+          if (err?.code === 'permission-denied') {
+            showToast('Verify your email address to enable Firestore cloud profile sync.');
+          }
           try {
             handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
           } catch {
@@ -422,6 +546,7 @@ export function useLearnMateAppState() {
             uid: 'local_autostart_student',
             displayName: 'JEE Aspirant',
             email: 'aspirant@learnmate.jee',
+            emailVerified: true,
           } as FirebaseUser);
         } else {
           setCurrentUser(null);
@@ -437,7 +562,9 @@ export function useLearnMateAppState() {
   }, []);
 
   useEffect(() => {
-    if (!currentUser || currentUser.uid.startsWith('local_')) return;
+    if (!currentUser || currentUser.uid.startsWith('local_') || !isFirebaseConfigured || !db) {
+      return;
+    }
     const materialsRef = collection(db, 'users', currentUser.uid, 'materials');
     const q = query(materialsRef, orderBy('createdAt', 'desc'));
 
@@ -454,9 +581,9 @@ export function useLearnMateAppState() {
               chapter: data.chapter || 'General',
               sourceType: (data.sourceType as MaterialItem['sourceType']) || 'pdf',
               sourceRef: data.sourceRef || '',
-              pageCount: data.pageCount || 3,
+              pageCount: data.pageCount || 1,
               currentPage: data.currentPage || 1,
-              progressPct: data.progressPct || 15,
+              progressPct: 15,
               contentSummary: data.contentSummary || '',
               addedLabel: 'Uploaded',
             };
@@ -500,22 +627,48 @@ export function useLearnMateAppState() {
     setStudentProfile(updated);
     if (!currentUser) return;
     localStorage.setItem(`learnmate_profile_${currentUser.uid}`, JSON.stringify(updated));
-    if (!currentUser.uid.startsWith('local_')) {
+    if (!currentUser.uid.startsWith('local_') && isFirebaseConfigured && db) {
       const userRef = doc(db, 'users', currentUser.uid);
       try {
-        await setDoc(
-          userRef,
-          {
-            userId: currentUser.uid,
-            displayName: updated.displayName.slice(0, 90),
-            targetExam: updated.targetExam,
-            preferredLanguage: updated.preferredLanguage,
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-      } catch {
-        // Local storage already updated
+        const snap = await getDoc(userRef);
+        const existingData = snap.exists() ? snap.data() : {};
+        await setDoc(userRef, {
+          userId: currentUser.uid,
+          displayName: updated.displayName.slice(0, 95) || 'JEE Aspirant',
+          targetExam:
+            updated.targetExam === 'JEE Advanced 2027' ||
+            updated.targetExam === 'NEET UG 2027' ||
+            updated.targetExam === 'BITSAT 2027' ||
+            updated.targetExam === 'JEE Main 2028'
+              ? updated.targetExam
+              : 'JEE Main 2027',
+          preferredLanguage:
+            updated.preferredLanguage === 'Hinglish'
+              ? 'Hinglish'
+              : updated.preferredLanguage === 'Hindi'
+              ? 'Hindi'
+              : 'English',
+          ...(updated.preferredCurrency ? { preferredCurrency: updated.preferredCurrency } : {}),
+          ...(typeof updated.isMinor === 'boolean' ? { isMinor: updated.isMinor } : {}),
+          ...(updated.guardianEmail ? { guardianEmail: updated.guardianEmail.slice(0, 120) } : {}),
+          ...(typeof updated.guardianConsentAccepted === 'boolean'
+            ? { guardianConsentAccepted: updated.guardianConsentAccepted }
+            : {}),
+          streakDays: typeof existingData.streakDays === 'number' ? existingData.streakDays : streakDays,
+          xp: typeof existingData.xp === 'number' ? existingData.xp : xp,
+          level: typeof existingData.level === 'number' ? existingData.level : level,
+          focusMinutes: typeof existingData.focusMinutes === 'number' ? existingData.focusMinutes : 0,
+          physicsMastery: typeof existingData.physicsMastery === 'number' ? existingData.physicsMastery : 0,
+          chemistryMastery: typeof existingData.chemistryMastery === 'number' ? existingData.chemistryMastery : 0,
+          mathsMastery: typeof existingData.mathsMastery === 'number' ? existingData.mathsMastery : 0,
+          createdAt: existingData.createdAt || serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err: any) {
+        if (err?.code === 'permission-denied') {
+          showToast('Saved locally. Verify email to enable cloud profile updates.');
+          return;
+        }
       }
     }
     showToast('Student profile & JEE target preferences saved!');
@@ -526,11 +679,13 @@ export function useLearnMateAppState() {
       exportedAt: new Date().toISOString(),
       platform: 'LearnMate JEE',
       profile: studentProfile,
+      subscriptionTier,
       materialsCount: materials.length,
       materials,
       tasks,
       creations,
       mistakesNotebook,
+      sm2Cards,
       lastMockScore,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -589,24 +744,38 @@ export function useLearnMateAppState() {
     setXp((x) => x + 25);
     if (streakDays === 0) setStreakDays(1);
     showToast(
-      `Extracted "${newMat.title}" into Full Detailed Notes, Formula Book, Mind Map & Quiz!`
+      `Indexed "${newMat.title}" (${bundle.pages.length} page${
+        bundle.pages.length === 1 ? '' : 's'
+      }) with ${bundle.extractionQuality === 'full' ? 'full source text' : bundle.extractionQuality}!`
     );
 
-    if (currentUser && !currentUser.uid.startsWith('local_')) {
-      try {
-        await syncChunkedMaterialToFirestore(currentUser.uid, newId, {
-          title: newMat.title,
-          subject: newMat.subject,
-          chapter: newMat.chapter,
-          sourceType: newMat.sourceType,
-          sourceRef: newMat.sourceRef || '',
-          pageCount: bundle.pages.length,
-          currentPage: 1,
-          progressPct: 15,
-          contentSummary: newMat.contentSummary || '',
-        });
-      } catch {
-        // Local state already updated
+    if (newMat.contentSummary.trim().length > 0) {
+      ingestDocumentOnServer({
+        materialId: newId,
+        title: newMat.title,
+        subject: newMat.subject,
+        chapter: newMat.chapter,
+        sourceType: newMat.sourceType,
+        sourceRef: newMat.sourceRef,
+        rawText: newMat.contentSummary,
+      }).catch(() => {});
+    }
+
+    if (currentUser && !currentUser.uid.startsWith('local_') && isFirebaseConfigured && db) {
+      const syncRes = await syncChunkedMaterialToFirestore(currentUser.uid, newId, {
+        title: newMat.title,
+        subject: newMat.subject,
+        chapter: newMat.chapter,
+        sourceType: newMat.sourceType,
+        sourceRef: newMat.sourceRef || '',
+        pageCount: bundle.pages.length,
+        currentPage: 1,
+        progressPct: 15,
+        contentSummary: newMat.contentSummary || '',
+        extractionQuality: bundle.extractionQuality,
+      });
+      if (!syncRes.synced && syncRes.error) {
+        showToast(syncRes.error);
       }
     }
   };
@@ -649,21 +818,22 @@ export function useLearnMateAppState() {
 
   const handleAddFlashcard = async (node: MindMapNodeItem) => {
     showToast(`Added "${node.title}" to Spaced-Repetition Flashcards!`);
-    if (currentUser && !currentUser.uid.startsWith('local_')) {
-      const cardId = `card_${node.id}_${Date.now()}`;
+    if (currentUser && !currentUser.uid.startsWith('local_') && isFirebaseConfigured && db) {
+      const cardId = `card_${node.id}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
       const cardRef = doc(db, 'users', currentUser.uid, 'flashcards', cardId);
       try {
         await setDoc(cardRef, {
           userId: currentUser.uid,
-          chapter: selectedMaterial?.chapter || 'General',
-          title: node.title,
-          definition: node.definition,
-          example: node.example,
-          commonTrap: node.commonTrap,
-          pageRef: node.pageRef,
+          chapter: (selectedMaterial?.chapter || 'General').slice(0, 115),
+          subject: selectedMaterial?.subject || 'Physics',
+          front: node.title.slice(0, 1900),
+          back: `${node.definition}\nTrap: ${node.commonTrap}`.slice(0, 3900),
           easeFactor: 2.5,
           intervalDays: 1,
-          createdAt: new Date().toISOString(),
+          repetitions: 0,
+          dueAtIso: new Date(Date.now() + 86400 * 1000).toISOString(),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
       } catch {
         // Non-blocking
@@ -671,34 +841,75 @@ export function useLearnMateAppState() {
     }
   };
 
-  const handleSubmitCBTMock = async (summary: CBTMockSummary, focusEvents: number) => {
+  const handleSubmitCBTMock = async (
+    summary: CBTMockSummary,
+    focusEvents: number,
+    questions?: CBTQuestion[],
+    responses?: Record<string, QuestionResponseState>
+  ) => {
+    const maxMarks = Math.max(4, Math.min(720, Math.round(summary.maxScore || 300)));
     const scaledScore = Math.max(
-      0,
-      Math.min(300, Math.round((summary.totalScore / Math.max(1, summary.maxScore)) * 300))
+      -100,
+      Math.min(720, Math.round((summary.totalScore / Math.max(1, maxMarks)) * 300))
     );
     setLastMockScore(scaledScore);
     setInCBTMockMode(false);
     setActiveTab('Progress');
     setXp((x) => x + 100);
-    showToast(
-      `CBT Submitted! Score: ${summary.totalScore}/${summary.maxScore} (Scaled: ${scaledScore}/300)`
-    );
 
-    if (currentUser && !currentUser.uid.startsWith('local_')) {
-      const attemptId = `mock_${Date.now()}`;
+    const attemptId = `mock_${Date.now()}`;
+    if (questions && responses) {
+      const diagnosis = buildLearningLoopDiagnosis({
+        attemptId,
+        questions,
+        responses,
+        score: summary.totalScore,
+        maxMarks,
+      });
+      if (diagnosis.mistakesCreated.length > 0) {
+        diagnosis.mistakesCreated.forEach((dm) => {
+          const matchedQ = questions.find((q) => q.id === dm.questionId);
+          if (matchedQ) {
+            handleRecordMistake(matchedQ, dm.userAnswer, 'CBT Mock');
+          }
+        });
+        showToast(
+          `CBT Submitted (${summary.totalScore}/${maxMarks}). ${diagnosis.mistakesCreated.length} mistake(s) diagnosed in Mistake Book!`
+        );
+      } else {
+        showToast(`CBT Submitted! Score: ${summary.totalScore}/${maxMarks} (Scaled: ${scaledScore}/300)`);
+      }
+    } else {
+      showToast(`CBT Submitted! Score: ${summary.totalScore}/${maxMarks} (Scaled: ${scaledScore}/300)`);
+    }
+
+    if (currentUser && !currentUser.uid.startsWith('local_') && isFirebaseConfigured && db) {
       const attemptRef = doc(db, 'users', currentUser.uid, 'mockAttempts', attemptId);
+      const mappedExamType =
+        cbtExamMode === 'JEE Advanced'
+          ? 'Advanced'
+          : cbtExamMode === 'NEET UG'
+          ? 'NEET UG'
+          : cbtExamMode === 'BITSAT'
+          ? 'BITSAT'
+          : 'Main';
       try {
         await setDoc(attemptRef, {
           userId: currentUser.uid,
-          paperTitle: `${cbtExamMode} • Official CBT Mock`,
-          examType: cbtExamMode,
-          score: scaledScore,
-          maxScore: 300,
-          accuracy: summary.accuracyPct,
-          focusEvents,
-          timeSpentSeconds: 1800,
-          responsesJson: JSON.stringify(summary),
-          completedAt: new Date().toISOString(),
+          mockTitle: `${cbtExamMode} CBT Mock`.slice(0, 190),
+          examType: mappedExamType,
+          examVersion: 'jee-main-2027-paper1',
+          score: Math.max(-100, Math.min(720, Math.round(summary.totalScore))),
+          maxMarks,
+          accuracy: Math.max(0, Math.min(100, Number(summary.accuracyPct || 0))),
+          durationMinutes: 180,
+          correctCount: summary.correctCount ?? 0,
+          incorrectCount: summary.incorrectCount ?? 0,
+          skippedCount: summary.unansweredCount ?? 0,
+          focusEvents: Math.max(0, Math.min(1000, focusEvents)),
+          summaryReport: JSON.stringify(summary).slice(0, 19000),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
       } catch {
         // Non-blocking
@@ -726,6 +937,9 @@ export function useLearnMateAppState() {
     sidebarCollapsed,
     setSidebarCollapsed,
     subscriptionTier,
+    subscriptionStatus,
+    paymentsConfigured,
+    billingError,
     proModalOpen,
     setProModalOpen,
     billingCycle,
@@ -784,12 +998,14 @@ export function useLearnMateAppState() {
     studentProfile,
     showToast,
     handleOpenLegal,
-    handleActivateProTier,
+    handleStartCheckout,
     handleRecordMistake,
     handleTagMistakeRootCause,
+    handleVerifyMistakeRecheck,
     handleUpdateSM2Card,
     handleAddSM2Card,
     handleSignOutAndPurgeAll,
+    handleDeleteAccountData,
     handleSaveStudentProfile,
     handleExportAccountData,
     handleAddMaterial,

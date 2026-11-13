@@ -5,329 +5,136 @@
       "description": "Private JEE student profile and gamification state",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "description": "Owner Firebase Auth UID",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "displayName": {
-          "type": "string",
-          "description": "Student full name",
-          "minLength": 1,
-          "maxLength": 100
-        },
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
         "targetExam": {
           "type": "string",
-          "description": "Target exam session",
           "enum": ["JEE Main 2027", "JEE Advanced 2027", "NEET UG 2027", "BITSAT 2027", "JEE Main 2028"],
           "maxLength": 40
         },
-        "preferredLanguage": {
-          "type": "string",
-          "description": "Tutor explanation language",
-          "enum": ["English", "Hinglish"],
-          "maxLength": 20
-        },
-        "streakDays": {
-          "type": "integer",
-          "description": "Active study streak in days"
-        },
-        "xp": {
-          "type": "integer",
-          "description": "Total experience points earned"
-        },
-        "level": {
-          "type": "integer",
-          "description": "Current student level"
-        },
-        "focusMinutes": {
-          "type": "integer",
-          "description": "Total focus minutes logged"
-        },
-        "physicsMastery": {
-          "type": "integer",
-          "description": "Physics mastery percentage (0-100)"
-        },
-        "chemistryMastery": {
-          "type": "integer",
-          "description": "Chemistry mastery percentage (0-100)"
-        },
-        "mathsMastery": {
-          "type": "integer",
-          "description": "Mathematics mastery percentage (0-100)"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Creation server timestamp"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Last update server timestamp"
-        }
+        "preferredLanguage": { "type": "string", "enum": ["English", "Hinglish", "Hindi"], "maxLength": 20 },
+        "streakDays": { "type": "integer" },
+        "xp": { "type": "integer" },
+        "level": { "type": "integer" },
+        "focusMinutes": { "type": "integer" },
+        "physicsMastery": { "type": "integer" },
+        "chemistryMastery": { "type": "integer" },
+        "mathsMastery": { "type": "integer" },
+        "migrationVersion": { "type": "integer" },
+        "migrationChecksum": { "type": "string", "maxLength": 64 },
+        "migratedV2At": { "type": "string", "maxLength": 48 },
+        "isMinor": { "type": "boolean" },
+        "guardianConsentGiven": { "type": "boolean" },
+        "guardianEmail": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [
-        "userId",
-        "displayName",
-        "targetExam",
-        "preferredLanguage",
-        "streakDays",
-        "xp",
-        "level",
-        "focusMinutes",
-        "physicsMastery",
-        "chemistryMastery",
-        "mathsMastery",
-        "createdAt",
-        "updatedAt"
+        "userId", "displayName", "targetExam", "preferredLanguage",
+        "streakDays", "xp", "level", "focusMinutes",
+        "physicsMastery", "chemistryMastery", "mathsMastery",
+        "createdAt", "updatedAt"
       ]
     },
     "StudyMaterial": {
       "title": "StudyMaterial",
-      "description": "Uploaded PDF, photo notes, YouTube lecture, text, or Google Drive/Docs material",
+      "description": "Uploaded PDF, photo notes, YouTube lecture transcript, text, or Google Drive material",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "title": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-        },
-        "subject": {
-          "type": "string",
-          "enum": ["Physics", "Chemistry", "Mathematics"],
-          "maxLength": 30
-        },
-        "chapter": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 120
-        },
-        "sourceType": {
-          "type": "string",
-          "enum": ["pdf", "photo", "youtube", "text", "drive"],
-          "maxLength": 20
-        },
-        "sourceRef": {
-          "type": "string",
-          "maxLength": 500
-        },
-        "pageCount": {
-          "type": "integer"
-        },
-        "currentPage": {
-          "type": "integer"
-        },
-        "contentSummary": {
-          "type": "string",
-          "maxLength": 20000
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "subject": { "type": "string", "enum": ["Physics", "Chemistry", "Mathematics"], "maxLength": 30 },
+        "chapter": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "sourceType": { "type": "string", "enum": ["pdf", "photo", "youtube", "text", "drive"], "maxLength": 20 },
+        "sourceRef": { "type": "string", "maxLength": 500 },
+        "pageCount": { "type": "integer" },
+        "currentPage": { "type": "integer" },
+        "contentSummary": { "type": "string", "maxLength": 40000 },
+        "extractionQuality": { "type": "string", "enum": ["full", "partial", "needs_ocr", "unavailable"] },
+        "contentHash": { "type": "string", "maxLength": 128 },
+        "annotationsJson": { "type": "string", "maxLength": 100000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [
-        "userId",
-        "title",
-        "subject",
-        "chapter",
-        "sourceType",
-        "sourceRef",
-        "pageCount",
-        "currentPage",
-        "contentSummary",
-        "createdAt",
-        "updatedAt"
+        "userId", "title", "subject", "chapter", "sourceType",
+        "sourceRef", "pageCount", "currentPage", "contentSummary",
+        "extractionQuality", "contentHash", "createdAt", "updatedAt"
       ]
+    },
+    "MaterialChunk": {
+      "title": "MaterialChunk",
+      "description": "Indexed per-page or per-timestamp text chunk for bounded multi-page retrieval",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "materialId": { "type": "string", "maxLength": 128 },
+        "pageNumber": { "type": "integer" },
+        "chunkIndex": { "type": "integer" },
+        "text": { "type": "string", "maxLength": 20000 },
+        "timestampLabel": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "materialId", "pageNumber", "chunkIndex", "text", "createdAt", "updatedAt"]
     },
     "StudyTask": {
       "title": "StudyTask",
-      "description": "Student task or daily study goal synced with Google Tasks/Calendar",
+      "description": "Student task or daily study goal",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "title": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-        },
-        "subject": {
-          "type": "string",
-          "enum": ["Physics", "Chemistry", "Mathematics"],
-          "maxLength": 30
-        },
-        "dueLabel": {
-          "type": "string",
-          "maxLength": 50
-        },
-        "completed": {
-          "type": "boolean"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "subject": { "type": "string", "enum": ["Physics", "Chemistry", "Mathematics"], "maxLength": 30 },
+        "dueLabel": { "type": "string", "maxLength": 50 },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": [
-        "userId",
-        "title",
-        "subject",
-        "dueLabel",
-        "completed",
-        "createdAt",
-        "updatedAt"
-      ]
+      "required": ["userId", "title", "subject", "dueLabel", "completed", "createdAt", "updatedAt"]
     },
     "SavedCreation": {
       "title": "SavedCreation",
       "description": "Saved SVG diagram, 3D model preset, visual poster, or animated lesson metadata",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "title": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-        },
-        "prompt": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 1000
-        },
-        "category": {
-          "type": "string",
-          "enum": ["diagram", "visual", "animated", "three3d"],
-          "maxLength": 30
-        },
-        "subject": {
-          "type": "string",
-          "enum": ["Physics", "Chemistry", "Mathematics", "All"],
-          "maxLength": 30
-        },
-        "sourceLabel": {
-          "type": "string",
-          "maxLength": 200
-        },
-        "payload": {
-          "type": "string",
-          "maxLength": 100000
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "userId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "prompt": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "category": { "type": "string", "enum": ["diagram", "visual", "animated", "three3d"] },
+        "subject": { "type": "string", "enum": ["Physics", "Chemistry", "Mathematics", "All"] },
+        "sourceLabel": { "type": "string", "maxLength": 200 },
+        "payload": { "type": "string", "maxLength": 100000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": [
-        "userId",
-        "title",
-        "prompt",
-        "category",
-        "subject",
-        "sourceLabel",
-        "payload",
-        "createdAt",
-        "updatedAt"
-      ]
+      "required": ["userId", "title", "prompt", "category", "subject", "sourceLabel", "payload", "createdAt", "updatedAt"]
     },
     "MockAttempt": {
       "title": "MockAttempt",
       "description": "Completed CBT mock exam or custom practice set attempt",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "mockTitle": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-        },
-        "examType": {
-          "type": "string",
-          "enum": ["Main", "Advanced", "NEET UG", "BITSAT"],
-          "maxLength": 20
-        },
-        "score": {
-          "type": "integer"
-        },
-        "maxMarks": {
-          "type": "integer"
-        },
-        "accuracy": {
-          "type": "number"
-        },
-        "durationMinutes": {
-          "type": "integer"
-        },
-        "correctCount": {
-          "type": "integer"
-        },
-        "incorrectCount": {
-          "type": "integer"
-        },
-        "skippedCount": {
-          "type": "integer"
-        },
-        "focusEvents": {
-          "type": "integer"
-        },
-        "summaryReport": {
-          "type": "string",
-          "maxLength": 20000
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "userId": { "type": "string", "maxLength": 128 },
+        "mockTitle": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "examType": { "type": "string", "enum": ["Main", "Advanced", "NEET UG", "BITSAT"] },
+        "examVersion": { "type": "string", "maxLength": 60 },
+        "score": { "type": "integer" },
+        "maxMarks": { "type": "integer" },
+        "accuracy": { "type": "number" },
+        "durationMinutes": { "type": "integer" },
+        "correctCount": { "type": "integer" },
+        "incorrectCount": { "type": "integer" },
+        "skippedCount": { "type": "integer" },
+        "focusEvents": { "type": "integer" },
+        "summaryReport": { "type": "string", "maxLength": 20000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [
-        "userId",
-        "mockTitle",
-        "examType",
-        "score",
-        "maxMarks",
-        "accuracy",
-        "durationMinutes",
-        "correctCount",
-        "incorrectCount",
-        "skippedCount",
-        "focusEvents",
-        "summaryReport",
-        "createdAt",
-        "updatedAt"
+        "userId", "mockTitle", "examType", "score", "maxMarks", "accuracy",
+        "durationMinutes", "correctCount", "incorrectCount", "skippedCount",
+        "focusEvents", "summaryReport", "createdAt", "updatedAt"
       ]
     },
     "RevisionCard": {
@@ -335,86 +142,145 @@
       "description": "Flashcard, Sticky Note, Mind Map node, Mistake DNA, or Formula item",
       "type": "object",
       "properties": {
-        "userId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "chapter": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 120
-        },
-        "subject": {
-          "type": "string",
-          "enum": ["Physics", "Chemistry", "Mathematics"],
-          "maxLength": 30
-        },
-        "cardType": {
-          "type": "string",
-          "enum": ["flashcard", "sticky", "mindmap", "summary", "mistake", "formula"],
-          "maxLength": 30
-        },
-        "title": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-        },
-        "body": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 5000
-        },
-        "trapOrTip": {
-          "type": "string",
-          "maxLength": 1000
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "userId": { "type": "string", "maxLength": 128 },
+        "chapter": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "subject": { "type": "string", "enum": ["Physics", "Chemistry", "Mathematics"] },
+        "cardType": { "type": "string", "enum": ["flashcard", "sticky", "mindmap", "summary", "mistake", "formula"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 5000 },
+        "trapOrTip": { "type": "string", "maxLength": 1000 },
+        "recheckCount": { "type": "integer" },
+        "masteryDelta": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": [
-        "userId",
-        "chapter",
-        "subject",
-        "cardType",
-        "title",
-        "body",
-        "trapOrTip",
-        "createdAt",
-        "updatedAt"
-      ]
+      "required": ["userId", "chapter", "subject", "cardType", "title", "body", "trapOrTip", "createdAt", "updatedAt"]
+    },
+    "Flashcard": {
+      "title": "Flashcard",
+      "description": "SM-2 spaced repetition flashcard with interval and easeFactor",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "chapter": { "type": "string" },
+        "subject": { "type": "string", "enum": ["Physics", "Chemistry", "Mathematics"] },
+        "front": { "type": "string" },
+        "back": { "type": "string" },
+        "easeFactor": { "type": "number" },
+        "intervalDays": { "type": "integer" },
+        "repetitions": { "type": "integer" },
+        "dueAtIso": { "type": "string" },
+        "lastReviewedIso": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "chapter", "subject", "front", "back", "easeFactor", "intervalDays", "repetitions", "dueAtIso", "createdAt", "updatedAt"]
+    },
+    "StudyJob": {
+      "title": "StudyJob",
+      "description": "Bounded background study/ingestion job metadata",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "jobType": { "type": "string", "enum": ["pdf_chunk", "youtube_ingest", "ocr_scan", "cbt_grade"] },
+        "status": { "type": "string", "enum": ["queued", "running", "completed", "failed", "cancelled"] },
+        "progressPct": { "type": "integer" },
+        "sourceLabel": { "type": "string" },
+        "errorMessage": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "jobType", "status", "progressPct", "sourceLabel", "createdAt", "updatedAt"]
+    },
+    "CbtDraft": {
+      "title": "CbtDraft",
+      "description": "In-progress CBT mock exam auto-save state",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "mockTitle": { "type": "string" },
+        "remainingSeconds": { "type": "integer" },
+        "responsesJson": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "mockTitle", "remainingSeconds", "responsesJson", "createdAt", "updatedAt"]
+    },
+    "Entitlement": {
+      "title": "Entitlement",
+      "description": "Server-managed student subscription entitlements",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "tier": { "type": "string", "enum": ["free", "pro", "institute"] },
+        "status": { "type": "string", "enum": ["active", "grace_period", "cancelled", "expired"] },
+        "updatedAtIso": { "type": "string" }
+      },
+      "required": ["userId", "tier", "status", "updatedAtIso"]
+    },
+    "IssueReport": {
+      "title": "IssueReport",
+      "description": "Student report for an answer key, typo, diagram, or provenance issue",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "questionId": { "type": "string" },
+        "issueType": { "type": "string", "enum": ["wrong_answer_key", "typo_or_latex", "missing_diagram", "provenance_mismatch", "other"] },
+        "details": { "type": "string" },
+        "status": { "type": "string", "enum": ["open"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "questionId", "issueType", "details", "status", "createdAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "Private student profile keyed by Firebase Auth UID"
+      "description": "Private student profile keyed by Firebase Auth UID (get/create/update/delete owner only; list disallowed)"
     },
-    "/materials/{materialId}": {
+    "/users/{userId}/materials/{materialId}": {
       "schema": { "$ref": "#/entities/StudyMaterial" },
-      "description": "Private study materials uploaded by the student"
+      "description": "Tenant-scoped study materials uploaded by the student"
     },
-    "/tasks/{taskId}": {
+    "/users/{userId}/materials/{materialId}/chunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/MaterialChunk" },
+      "description": "Tenant-scoped paginated material chunks for multi-page retrieval"
+    },
+    "/users/{userId}/tasks/{taskId}": {
       "schema": { "$ref": "#/entities/StudyTask" },
-      "description": "Private study tasks and daily goals"
+      "description": "Tenant-scoped study tasks and daily goals"
     },
-    "/creations/{creationId}": {
+    "/users/{userId}/creations/{creationId}": {
       "schema": { "$ref": "#/entities/SavedCreation" },
-      "description": "Saved diagrams, 3D configurations, visuals, and animated lessons"
+      "description": "Tenant-scoped saved diagrams, 3D presets, visuals, and animated lessons"
     },
-    "/mockAttempts/{attemptId}": {
+    "/users/{userId}/mockAttempts/{attemptId}": {
       "schema": { "$ref": "#/entities/MockAttempt" },
-      "description": "Private JEE Main/Advanced CBT mock attempts and analysis"
+      "description": "Tenant-scoped completed CBT mock attempts"
     },
-    "/revisions/{revisionId}": {
+    "/users/{userId}/revisions/{revisionId}": {
       "schema": { "$ref": "#/entities/RevisionCard" },
-      "description": "Private flashcards, mind map nodes, mistake DNA, and formula cards"
+      "description": "Tenant-scoped mistake DNA, sticky notes, formula cards, and recheck state"
+    },
+    "/users/{userId}/flashcards/{cardId}": {
+      "schema": { "$ref": "#/entities/Flashcard" },
+      "description": "Tenant-scoped SM-2 flashcards"
+    },
+    "/users/{userId}/studyJobs/{jobId}": {
+      "schema": { "$ref": "#/entities/StudyJob" },
+      "description": "Tenant-scoped ingestion & grading job state"
+    },
+    "/users/{userId}/cbtDrafts/{draftId}": {
+      "schema": { "$ref": "#/entities/CbtDraft" },
+      "description": "Tenant-scoped in-progress CBT auto-save drafts"
+    },
+    "/users/{userId}/entitlements/{docId}": {
+      "schema": { "$ref": "#/entities/Entitlement" },
+      "description": "Server-written subscription entitlements (owner read-only)"
+    },
+    "/issueReports/{reportId}": {
+      "schema": { "$ref": "#/entities/IssueReport" },
+      "description": "Authenticated question/PYQ issue reports (write-once, owner get only)"
     }
   }
 }

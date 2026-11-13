@@ -1,3 +1,13 @@
+import {
+  AngleMode,
+  evaluateMathDetailed,
+  safeEvaluateMathExpression,
+  validateMathSyntax,
+} from './safeMathParser';
+
+export { evaluateMathDetailed, validateMathSyntax };
+export type { AngleMode };
+
 export type QuestionStatus =
   | 'not_visited'
   | 'not_answered'
@@ -21,6 +31,13 @@ export type ErrorRootCauseTag =
 
 export type ExamTrack = 'JEE Main' | 'JEE Advanced' | 'NEET UG' | 'BITSAT';
 
+export type QuestionProvenanceType =
+  | 'VERIFIED_OFFICIAL_PYQ'
+  | 'RECONSTRUCTED_WITH_SOURCE'
+  | 'LEARNMATE_ORIGINAL'
+  | 'AI_GENERATED'
+  | 'UNVERIFIED_OR_REVIEW_PENDING';
+
 export interface CBTQuestion {
   id: string;
   number: number;
@@ -38,11 +55,20 @@ export interface CBTQuestion {
   correctIndex: number;
   correctIndices?: number[]; // For JEE Advanced multi-choice
   numericalAnswer?: number;
+  numericalTolerance?: number;
   explanation: string;
   difficultyBucket?: 'Beginner' | 'Must-Do' | 'Advanced Climb';
   examType?: ExamTrack;
+  examVersion?: string;
   advancedFormat?: AdvancedQuestionFormat;
   pyqTag?: string;
+  year?: number;
+  shift?: string;
+  provenanceType?: QuestionProvenanceType;
+  sourceUrl?: string;
+  answerKeyVersion?: string;
+  verificationStatus?: 'verified' | 'reconstructed' | 'unverified';
+  licenseStatus?: string;
   conceptTags?: string[];
 }
 
@@ -88,15 +114,17 @@ export interface CBTSummaryMetrics {
 }
 
 /**
- * Evaluates a single question under either:
+ * Evaluates a single question under versioned official exam rules:
  * - Official NTA JEE Main 2026/2027 Paper 1 rules:
  *   Section A (20 Single-Choice MCQs): +4 correct, -1 wrong, 0 unattempted
  *   Section B (5 Compulsory Numerical-Value Questions): +4 correct, -1 wrong, 0 unattempted
  * - JEE Advanced Paper 1 & 2 rules:
  *   Single Choice / Paragraph / Matrix-Match: +3 correct, -1 wrong
  *   Multiple Choice (One or More than One Correct): +4 all correct, -2 any wrong chosen,
- *     +3 for 3 of 4 correct, +2 for 2 of 3+ correct, +1 for 1 of 2+ correct if zero wrong chosen
+ *     +1 per correct option chosen when zero wrong options are chosen
  *   Non-Negative Integer Numerical: +4 correct, 0 wrong
+ * - BITSAT: +3 correct, -1 wrong
+ * - NEET UG: +4 correct, -1 wrong
  */
 export function evaluateSingleQuestionMarks(
   q: CBTQuestion,
@@ -144,9 +172,16 @@ export function evaluateSingleQuestionMarks(
     let userLabel = rawVal;
     if (hasNum && q.numericalAnswer !== undefined) {
       const parsedUser = Number(rawVal);
-      isCorrect =
-        Math.round(parsedUser) === Math.round(q.numericalAnswer) ||
-        Math.abs(parsedUser - q.numericalAnswer) <= 0.05;
+      const expected = q.numericalAnswer;
+      if (typeof q.numericalTolerance === 'number' && q.numericalTolerance >= 0) {
+        isCorrect = Math.abs(parsedUser - expected) <= q.numericalTolerance;
+      } else if (Number.isInteger(expected)) {
+        // Strict NTA integer-type Section B spec: user entry must match integer exactly (or within 1e-6 float repr)
+        isCorrect = Math.abs(parsedUser - expected) <= 1e-6;
+      } else {
+        // Decimal numerical questions accept within +/-0.01 unless question explicitly sets numericalTolerance
+        isCorrect = Math.abs(parsedUser - expected) <= 0.01;
+      }
     } else if (hasOptFallback) {
       isCorrect = r!.selectedOption === q.correctIndex;
       userLabel = q.options[r!.selectedOption!] || `Option ${r!.selectedOption! + 1}`;
@@ -360,7 +395,7 @@ export function transitionQuestionStatus(
 export function detectEquationParameters(expr: string): string[] {
   const cleaned = expr
     .toLowerCase()
-    .replace(/\b(sin|cos|tan|asin|acos|atan|sqrt|abs|log|ln|exp|pi)\b/g, ' ');
+    .replace(/\b(sinh|cosh|tanh|asin|acos|atan|log10|log2|sqrt|cbrt|sin|cos|tan|csc|sec|cot|abs|log|ln|exp|floor|ceil|round|sign|min|max|pow|pi|tau)\b/g, ' ');
   const candidates = ['a', 'b', 'c', 'm', 'k'];
   const found: string[] = [];
   for (const param of candidates) {
@@ -373,98 +408,27 @@ export function detectEquationParameters(expr: string): string[] {
 }
 
 /**
- * Evaluates a mathematical expression y = f(x) safely for the Desmos Graphing & Scientific Calculator.
- * Supports parameters (a, b, c, m, k), x^2, sin, cos, tan, asin, acos, atan, ln, log, exp, sqrt, abs, pi, e.
+ * Evaluates a mathematical expression y = f(x) safely via zero-eval recursive-descent AST parsing.
+ * Supports parameters (a, b, c, m, k), rad/deg angle mode, x^2, trig, inverse trig, hyperbolic, ln, log, exp, sqrt, abs, pi, e.
  */
 export function evaluateMathFunction(
   expr: string,
   xVal: number,
-  params: Record<string, number> = {}
+  params: Record<string, number> = {},
+  angleMode: AngleMode = 'rad'
 ): number | null {
-  try {
-    let cleaned = expr.trim().toLowerCase();
-    if (cleaned.startsWith('y=')) cleaned = cleaned.slice(2).trim();
-    if (cleaned.startsWith('y =')) cleaned = cleaned.slice(3).trim();
-    if (cleaned.startsWith('f(x)=')) cleaned = cleaned.slice(5).trim();
-    if (cleaned.startsWith('f(x) =')) cleaned = cleaned.slice(6).trim();
-
-    cleaned = cleaned.replace(/−/g, '-');
-
-    // Substitute parameter slider variables (a, b, c, m, k) first
-    const paramDefaults: Record<string, number> = {
-      a: 1,
-      b: 1,
-      c: 0,
-      m: 1,
-      k: 1,
-      ...params,
-    };
-
-    // Handle implicit multiplication with parameters e.g. ax -> a*x, 2a -> 2*a
-    cleaned = cleaned.replace(/([abcmk])(x)/g, '$1*$2');
-    cleaned = cleaned.replace(/(\d)([abcmk])\b/g, '$1*$2');
-    cleaned = cleaned.replace(/([abcmk])(\()/g, '$1*$2');
-
-    for (const [k, val] of Object.entries(paramDefaults)) {
-      const reg = new RegExp(`\\b${k}\\b`, 'g');
-      cleaned = cleaned.replace(reg, `(${val})`);
-    }
-
-    // Implicit multiplication like 2x -> 2*x, 4(x) -> 4*(x), )x -> )*x
-    cleaned = cleaned.replace(/(\d)(x)/g, '$1*$2');
-    cleaned = cleaned.replace(/(\d)(\()/g, '$1*$2');
-    cleaned = cleaned.replace(/(\))(x|\d|\()/g, '$1*$2');
-
-    // Replace functions and constants
-    cleaned = cleaned
-      .replace(/\basin\b/g, 'Math.asin')
-      .replace(/\bacos\b/g, 'Math.acos')
-      .replace(/\batan\b/g, 'Math.atan')
-      .replace(/\bsin\b/g, 'Math.sin')
-      .replace(/\bcos\b/g, 'Math.cos')
-      .replace(/\btan\b/g, 'Math.tan')
-      .replace(/\bsqrt\b/g, 'Math.sqrt')
-      .replace(/\babs\b/g, 'Math.abs')
-      .replace(/\bln\b/g, 'Math.log')
-      .replace(/\blog10\b/g, 'Math.log10')
-      .replace(/\blog\b/g, 'Math.log10')
-      .replace(/\bexp\b/g, 'Math.exp')
-      .replace(/\bpi\b/g, 'Math.PI')
-      .replace(/\be\b/g, 'Math.E')
-      .replace(/\^/g, '**');
-
-    cleaned = cleaned.replace(/\bx\b/g, `(${xVal})`);
-
-    if (
-      /[a-zA-Z_$]/.test(
-        cleaned.replace(
-          /Math\.(asin|acos|atan|sin|cos|tan|sqrt|abs|log10|log|exp|PI|E)/g,
-          ''
-        )
-      )
-    ) {
-      return null;
-    }
-
-    const fn = new Function(`return (${cleaned});`);
-    const result = fn();
-    if (typeof result === 'number' && Number.isFinite(result)) {
-      return result;
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  return safeEvaluateMathExpression(expr, xVal, params, angleMode);
 }
 
 export function evaluateDerivative(
   expr: string,
   xVal: number,
-  params: Record<string, number> = {}
+  params: Record<string, number> = {},
+  angleMode: AngleMode = 'rad'
 ): number | null {
   const h = 1e-4;
-  const fPlus = evaluateMathFunction(expr, xVal + h, params);
-  const fMinus = evaluateMathFunction(expr, xVal - h, params);
+  const fPlus = evaluateMathFunction(expr, xVal + h, params, angleMode);
+  const fMinus = evaluateMathFunction(expr, xVal - h, params, angleMode);
   if (fPlus === null || fMinus === null) return null;
   const deriv = (fPlus - fMinus) / (2 * h);
   return Number.isFinite(deriv) ? deriv : null;
@@ -485,7 +449,8 @@ export function findRootsAndExtrema(
   expr: string,
   xMin: number,
   xMax: number,
-  params: Record<string, number> = {}
+  params: Record<string, number> = {},
+  angleMode: AngleMode = 'rad'
 ): GraphKeyPoint[] {
   const points: GraphKeyPoint[] = [];
   const steps = 240;
@@ -493,7 +458,7 @@ export function findRootsAndExtrema(
 
   // Y-intercept if 0 is in range
   if (xMin <= 0 && xMax >= 0) {
-    const y0 = evaluateMathFunction(expr, 0, params);
+    const y0 = evaluateMathFunction(expr, 0, params, angleMode);
     if (y0 !== null) {
       points.push({
         x: 0,
@@ -507,8 +472,8 @@ export function findRootsAndExtrema(
   for (let i = 0; i < steps; i++) {
     const x1 = xMin + i * dx;
     const x2 = x1 + dx;
-    const y1 = evaluateMathFunction(expr, x1, params);
-    const y2 = evaluateMathFunction(expr, x2, params);
+    const y1 = evaluateMathFunction(expr, x1, params, angleMode);
+    const y2 = evaluateMathFunction(expr, x2, params, angleMode);
 
     if (y1 !== null && y2 !== null) {
       // Check root sign change
@@ -528,11 +493,11 @@ export function findRootsAndExtrema(
     }
 
     // Check local extrema via derivative sign change
-    const d1 = evaluateDerivative(expr, x1, params);
-    const d2 = evaluateDerivative(expr, x2, params);
+    const d1 = evaluateDerivative(expr, x1, params, angleMode);
+    const d2 = evaluateDerivative(expr, x2, params, angleMode);
     if (d1 !== null && d2 !== null && d1 * d2 <= 0 && Math.abs(d1 - d2) > 1e-4 && Math.abs(d1 - d2) < 50) {
       const extX = x1 - (d1 * (x2 - x1)) / (d2 - d1);
-      const extY = evaluateMathFunction(expr, extX, params);
+      const extY = evaluateMathFunction(expr, extX, params, angleMode);
       if (extY !== null) {
         const ex = Number(extX.toFixed(3));
         const ey = Number(extY.toFixed(3));
@@ -560,7 +525,8 @@ export function findCurveIntersections(
   expr2: string,
   xMin: number,
   xMax: number,
-  params: Record<string, number> = {}
+  params: Record<string, number> = {},
+  angleMode: AngleMode = 'rad'
 ): GraphKeyPoint[] {
   const pts: GraphKeyPoint[] = [];
   const steps = 240;
@@ -569,10 +535,10 @@ export function findCurveIntersections(
   for (let i = 0; i < steps; i++) {
     const x1 = xMin + i * dx;
     const x2 = x1 + dx;
-    const a1 = evaluateMathFunction(expr1, x1, params);
-    const b1 = evaluateMathFunction(expr2, x1, params);
-    const a2 = evaluateMathFunction(expr1, x2, params);
-    const b2 = evaluateMathFunction(expr2, x2, params);
+    const a1 = evaluateMathFunction(expr1, x1, params, angleMode);
+    const b1 = evaluateMathFunction(expr2, x1, params, angleMode);
+    const a2 = evaluateMathFunction(expr1, x2, params, angleMode);
+    const b2 = evaluateMathFunction(expr2, x2, params, angleMode);
 
     if (a1 !== null && b1 !== null && a2 !== null && b2 !== null) {
       const diff1 = a1 - b1;
@@ -580,7 +546,7 @@ export function findCurveIntersections(
       if (Math.abs(diff1) < 1e-5 || (diff1 * diff2 < 0 && Math.abs(diff1 - diff2) < 25)) {
         const ix =
           Math.abs(diff1 - diff2) < 1e-9 ? x1 : x1 - (diff1 * (x2 - x1)) / (diff2 - diff1);
-        const iy = evaluateMathFunction(expr1, ix, params);
+        const iy = evaluateMathFunction(expr1, ix, params, angleMode);
         if (iy !== null) {
           const rx = Number(ix.toFixed(3));
           const ry = Number(iy.toFixed(3));
@@ -1985,6 +1951,8 @@ export interface DiagramVectorOverlayItem {
   yPct: number;
   dx: number;
   dy: number;
+  angleDeg?: number;
+  magnitude?: number;
   color: string;
 }
 

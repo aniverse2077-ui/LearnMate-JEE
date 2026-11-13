@@ -11,15 +11,18 @@ import {
   Globe,
 } from 'lucide-react';
 import { EXPANDED_NTA_58_CHAPTERS, MicroShardTask } from '../data/expandedNta58Chapters';
-import { getAuthenticatedRequestHeaders } from '../services/workspaceService';
+import { apiFetchWithAuth } from '../services/workspaceService';
+import { MathRichText } from './MathRichText';
 
 export interface DynamicCompanionProps {
   activeChapterName?: string;
+  activeMaterialId?: string;
   onEarnXp?: (xp: number, reason?: string) => void;
 }
 
 export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
   activeChapterName = 'Rotational Motion',
+  activeMaterialId,
   onEarnXp,
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
@@ -29,6 +32,9 @@ export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
   const [socraticMode, setSocraticMode] = useState<boolean>(true);
   const [questionInput, setQuestionInput] = useState<string>('');
   const [aiReply, setAiReply] = useState<string>('');
+  const [aiCitations, setAiCitations] = useState<
+    { chunkId: string; pageNumber: number; timestampLabel?: string | null; snippet: string }[]
+  >([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [completedShards, setCompletedShards] = useState<Record<string, boolean>>({});
   const [ocrPreviewDataUrl, setOcrPreviewDataUrl] = useState<string | null>(null);
@@ -50,30 +56,32 @@ export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
       setClueCoins((c) => Math.max(0, c - 1));
     }
     setLoading(true);
+    setAiCitations([]);
     try {
-      const headers = await getAuthenticatedRequestHeaders();
-      const res = await fetch('/api/ai/tutor', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          question: promptText,
-          chapter: matchedChapter.chapterName,
-          subject: matchedChapter.subject,
-          language,
-          socraticMode,
-          hintLevel: hintLevel || (socraticMode ? 1 : undefined),
-          imageBase64: ocrPreviewDataUrl || undefined,
-          imageMimeType: ocrPreviewDataUrl ? 'image/png' : undefined,
-        }),
+      const res = await apiFetchWithAuth<{
+        answer?: string;
+        text?: string;
+        citations?: { chunkId: string; pageNumber: number; timestampLabel?: string | null; snippet: string }[];
+      }>('/api/ai/tutor', {
+        question: promptText,
+        chapter: matchedChapter.chapterName,
+        subject: matchedChapter.subject,
+        materialId: activeMaterialId,
+        language,
+        socraticMode,
+        hintLevel: hintLevel || (socraticMode ? 1 : undefined),
+        imageBase64: ocrPreviewDataUrl || undefined,
+        imageMimeType: ocrPreviewDataUrl ? 'image/png' : undefined,
       });
-      const data = await res.json();
       if (!res.ok) {
         setAiReply(
-          data?.message ||
-            'AI Mentor is temporarily unavailable. Check your server configuration and try again.'
+          `[${res.error.errorCode}] ${res.error.message}`
         );
       } else {
-        setAiReply(data.answer || 'Completed analysis.');
+        setAiReply(res.data.answer || res.data.text || 'Completed analysis.');
+        if (Array.isArray(res.data.citations)) {
+          setAiCitations(res.data.citations);
+        }
         onEarnXp?.(15, 'Socratic AI Doubt Solved (+15 XP)');
       }
     } catch (err: any) {
@@ -99,7 +107,7 @@ export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
   return (
     <>
       {/* Floating Companion Trigger Pill */}
-      <div className="fixed bottom-12 right-5 z-40">
+      <div className="fixed bottom-20 right-4 lg:bottom-12 lg:right-5 z-40">
         {!isOpen ? (
           <button
             type="button"
@@ -234,8 +242,22 @@ export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
                   </div>
 
                   {aiReply && (
-                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-[11px] leading-relaxed whitespace-pre-wrap">
-                      {aiReply}
+                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-[11px] leading-relaxed space-y-2">
+                      <MathRichText content={aiReply} />
+                      {aiCitations.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-1.5 border-t border-slate-200/80 dark:border-slate-700">
+                          {aiCitations.map((cit) => (
+                            <span
+                              key={cit.chunkId}
+                              title={cit.snippet}
+                              className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-[10px]"
+                            >
+                              Page {cit.pageNumber}
+                              {cit.timestampLabel ? ` • ${cit.timestampLabel}` : ''}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -333,8 +355,8 @@ export const DynamicCompanion: React.FC<DynamicCompanionProps> = ({
                     </div>
                   )}
                   {aiReply && (
-                    <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] whitespace-pre-wrap">
-                      {aiReply}
+                    <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px]">
+                      <MathRichText content={aiReply} />
                     </div>
                   )}
                 </div>

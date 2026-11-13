@@ -283,24 +283,31 @@ test('SuperMemo SM-2 algorithm and Shift Percentile Predictor compute accurate i
   assert.equal(shards[0].masteryQuestions.length, 3);
 });
 
-test('generateMaterialStudyBundle and validateAndIngestPYQPack work with zero KaTeX strings', () => {
+test('generateMaterialStudyBundle builds source-grounded pages without boilerplate formula injection and validates PYQ provenance', () => {
+  const multiPageSource = [
+    '[Page 1] Parallel axis theorem states $$I = I_{cm} + M d^2$$ for rigid bodies.',
+    '[Page 2] Rotational kinetic energy is $K = \\frac{1}{2} I \\omega^2$.',
+    '[Page 3] Rolling without slipping requires $v_{cm} = \\omega R$.',
+  ].join('\n\n');
+
   const bundle = generateMaterialStudyBundle({
     materialId: 'test-mat-1',
     title: 'Rotational Dynamics Lecture Notes',
     subject: 'Physics',
     chapter: 'Rotational Motion',
     sourceType: 'pdf',
-    rawText:
-      'Parallel axis theorem states $$I = I_{cm} + M d^2$$ and rotational kinetic energy is $K = \\frac{1}{2} I \\omega^2$.',
+    rawText: multiPageSource,
     originalFileUrl: 'blob:https://example.com/sample.pdf',
     originalMimeType: 'application/pdf',
   });
 
-  assert.ok(bundle.pages.length >= 3);
+  assert.equal(bundle.pages.length, 3);
   assert.equal(bundle.pages[0].sections.length, 4);
   assert.ok(bundle.formulas.some((f) => f.formula.includes('I_{cm}')));
+  assert.equal(bundle.formulas.some((f) => f.formula.includes('varepsilon_0')), false);
   assert.equal(/katex/i.test(JSON.stringify(bundle)), false);
   assert.equal(CBT_MOCK_QUESTIONS.length, 75);
+  assert.ok(CBT_MOCK_QUESTIONS.some((q) => q.provenanceType === 'LEARNMATE_ORIGINAL'));
 
   const packRes = validateAndIngestPYQPack([
     {
@@ -322,6 +329,7 @@ test('generateMaterialStudyBundle and validateAndIngestPYQPack work with zero Ka
   assert.equal(packRes.valid, true);
   assert.equal(packRes.questions.length, 1);
   assert.equal(packRes.questions[0].section, 'Section B');
+  assert.equal(packRes.questions[0].provenanceType, 'RECONSTRUCTED_WITH_SOURCE');
 });
 
 test('Multi-exam evaluation supports BITSAT (+3/-1) and NEET UG (+4/-1) plus 12-hour marathon timestamp chunking', async () => {

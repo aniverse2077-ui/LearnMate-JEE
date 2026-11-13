@@ -1,8 +1,14 @@
 {
   "packId": "jee-advanced-papers",
-  "title": "JEE Advanced Paper 1 & 2 Multi-Format Pack (Multi-Choice +4/-2 Partial, Paragraph & Matrix-Match)",
+  "title": "JEE Advanced Multi-Format Sample Pack (Multi-Choice +4/-2 Partial, Paragraph & Matrix-Match)",
   "examType": "JEE Advanced",
-  "markingScheme": "MULTI_MCQ (+4/-2 with +3/+2/+1 partial), NUMERICAL (+4/0), PARAGRAPH (+3/-1), MATRIX_MATCH (+4/-1)",
+  "examVersion": "jee-advanced-2024-paper1",
+  "answerKeysStripped": true,
+  "keyVersion": "v2027.1",
+  "isPartialArchive": true,
+  "totalAvailableQuestions": 3,
+  "archiveNote": "Curated 3-question sample showcasing JEE Advanced multi-correct partial marking, matrix-match, and paragraph formats. Graded exclusively on server via /api/cbt/grade or /api/pyq/verify-answer.",
+  "markingScheme": "MULTI_MCQ (+4/-2 with +1 per correct subset), NUMERICAL (+4/0), PARAGRAPH (+3/-1), MATRIX_MATCH (+4/-1)",
   "updatedAt": "2026-11-12T00:00:00Z",
   "questions": [
     {
@@ -13,18 +19,18 @@
       "questionType": "MULTI_MCQ",
       "chapter": "Rotational Motion & Rigid Body Dynamics",
       "difficulty": "Tough",
+      "provenanceType": "LEARNMATE_ORIGINAL",
+      "verificationStatus": "verified",
+      "examVersion": "jee-advanced-2024-paper1",
       "marksCorrect": 4,
       "marksWrong": -2,
-      "stem": "[MULTI-CORRECT: +4 / -2 with +3/+2/+1 Partial Marking] A uniform thin rod of mass $M$ and length $L$ rests on a smooth horizontal tabletop. A horizontal impulse $J$ is applied perpendicular to the rod at a distance $x = \\frac{L}{6}$ from its center $O$. Which of the following statements is/are correct immediately after the impulse?",
+      "stem": "[MULTI-CORRECT: +4 / -2 with Partial Marking] A uniform thin rod of mass $M$ and length $L$ rests on a smooth horizontal tabletop. A horizontal impulse $J$ is applied perpendicular to the rod at a distance $x = \\frac{L}{6}$ from its center $O$. Which of the following statements is/are correct immediately after the impulse?",
       "options": [
         "The center of mass velocity is $v_{\\text{cm}} = \\frac{J}{M}$",
         "The angular velocity about the center of mass is $\\omega = \\frac{2J}{ML}$",
         "The instantaneous axis of rotation lies at distance $\\frac{L}{2}$ from center $O$ on the opposite side",
         "The kinetic energy imparted to the rod is $\\frac{2J^2}{3M}$"
-      ],
-      "correctIndex": 0,
-      "correctIndices": [0, 1, 2, 3],
-      "explanation": "By linear impulse-momentum, $v_{\\text{cm}} = J/M$. By angular impulse about $O$, $J(L/6) = (\\frac{1}{12}ML^2)\\omega \\implies \\omega = \\frac{2J}{ML}$. Distance to instantaneous center $r_{\\text{IC}} = v_{\\text{cm}}/\\omega = L/2$. Kinetic energy $K = \\frac{1}{2}Mv_{\\text{cm}}^2 + \\frac{1}{2}I\\omega^2 = \\frac{J^2}{2M} + \\frac{J^2}{6M} = \\frac{2J^2}{3M}$."
+      ]
     },
     {
       "id": "pack-ja-chem-1",
@@ -34,6 +40,9 @@
       "questionType": "MATRIX_MATCH",
       "chapter": "Werner’s Theory, IUPAC, VBT, Crystal Field Theory (CFT) & Isomerism",
       "difficulty": "Tough",
+      "provenanceType": "LEARNMATE_ORIGINAL",
+      "verificationStatus": "verified",
+      "examVersion": "jee-advanced-2024-paper1",
       "marksCorrect": 4,
       "marksWrong": -1,
       "stem": "[MATRIX MATCH] Match each coordination species in List-I with its correct hybridization and magnetic nature in List-II:",
@@ -54,9 +63,7 @@
         "P-2, Q-1, R-3, S-4",
         "P-1, Q-2, R-4, S-3",
         "P-3, Q-4, R-1, S-2"
-      ],
-      "correctIndex": 0,
-      "explanation": "$[\\text{Ni}(\\text{CN})_4]^{2-}$ is square planar ($dsp^2$, diamagnetic); $[\\text{NiCl}_4]^{2-}$ is tetrahedral ($sp^3$, 2 unpaired electrons); $[\\text{Co}(\\text{NH}_3)_6]^{3+}$ is inner-orbital octahedral ($d^2sp^3$, diamagnetic); $[\\text{CoF}_6]^{3-}$ is outer-orbital octahedral ($sp^3d^2$, 4 unpaired electrons)."
+      ]
     },
     {
       "id": "pack-ja-math-1",
@@ -66,6 +73,9 @@
       "questionType": "PARAGRAPH",
       "chapter": "Matrices, Determinants, Adjoint Properties & Cramer’s Linear Systems",
       "difficulty": "Tough",
+      "provenanceType": "LEARNMATE_ORIGINAL",
+      "verificationStatus": "verified",
+      "examVersion": "jee-advanced-2024-paper1",
       "marksCorrect": 3,
       "marksWrong": -1,
       "paragraphPassage": "Let $A$ be a $3 \\times 3$ non-singular real matrix satisfying $\\det(A) = 2$. Define $B = \\text{adj}(\\text{adj}(A))$.",
@@ -75,9 +85,7 @@
         "$16$",
         "$\\frac{1}{8}$",
         "$\\frac{1}{64}$"
-      ],
-      "correctIndex": 0,
-      "explanation": "For an $n \\times n$ matrix $A$, $\\det(\\text{adj}(\\text{adj}(A))) = (\\det A)^{(n-1)^2}$. With $n = 3$ and $\\det A = 2$, $\\det(B) = 2^{(3-1)^2} = 2^4 = 16$. Therefore $\\det(B^{-1}) = \\frac{1}{16}$."
+      ]
     }
   ]
 }

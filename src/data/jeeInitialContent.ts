@@ -1,6 +1,13 @@
 import { CBTQuestion, QuestionResponseState } from '../utils/jeeEngine';
 import { Preset3DId } from '../components/ThreeSceneCanvas';
 import { EXPANDED_NTA_58_CHAPTERS } from './expandedNta58Chapters';
+import {
+  buildGroundedMaterialStudyBundle,
+  ContentProvenance,
+  ExtractionQuality,
+} from '../services/studyBundleBuilder';
+
+export type { ContentProvenance, ExtractionQuality };
 
 export interface NotePageData {
   pageNumber: number;
@@ -68,6 +75,9 @@ export interface MaterialStudyBundle {
   originalFileUrl?: string;
   originalMimeType?: string;
   rawText: string;
+  provenance?: ContentProvenance;
+  extractionQuality?: ExtractionQuality;
+  contentHash?: string;
   pages: NotePageData[];
   mindMapNodes: MindMapNodeItem[];
   stickyNotes: StickyNoteData[];
@@ -76,9 +86,9 @@ export interface MaterialStudyBundle {
 }
 
 /**
- * Generates a comprehensive MaterialStudyBundle from any user-uploaded
- * PDF, Handwritten Photo, YouTube Lecture (up to 12h), Paste Text, or Google Drive file.
- * Highlights key definitions/laws in **bold** and exceptions/traps in *italics*.
+ * Generates a grounded MaterialStudyBundle strictly from user-uploaded PDF,
+ * Handwritten Photo, YouTube Transcript/SRT, Paste Text, or Google Drive material.
+ * Never injects unrelated formula banks or fabricated lecture timestamps.
  */
 export function generateMaterialStudyBundle(params: {
   materialId: string;
@@ -91,379 +101,10 @@ export function generateMaterialStudyBundle(params: {
   originalFileUrl?: string;
   originalMimeType?: string;
 }): MaterialStudyBundle {
-  const {
-    materialId,
-    title,
-    subject,
-    chapter,
-    sourceType,
-    rawText,
-    durationHours = 2,
-    originalFileUrl,
-    originalMimeType,
-  } = params;
-  const cleanText = (rawText || '').trim();
-
-  // Split raw extracted text into logical paragraphs/blocks
-  const rawParagraphs = cleanText
-    .split(/\n{2,}|\r\n{2,}/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-
-  // Extract any explicit $$...$$ or $...$ formulas present in the uploaded material text
-  const extractedRawFormulas: string[] = [];
-  const displayRegex = /\$\$([\s\S]+?)\$\$/g;
-  let match: RegExpExecArray | null;
-  while ((match = displayRegex.exec(cleanText)) !== null) {
-    const eq = `$$${match[1].trim()}$$`;
-    if (!extractedRawFormulas.includes(eq)) extractedRawFormulas.push(eq);
-  }
-  // Strip display math first before scanning for inline $...$ equations
-  const textWithoutDisplayMath = cleanText.replace(/\$\$[\s\S]+?\$\$/g, ' ');
-  const inlineRegex = /\$([^$\n]+?)\$/g;
-  while ((match = inlineRegex.exec(textWithoutDisplayMath)) !== null) {
-    const inner = match[1].trim();
-    if (inner.includes('=') || inner.includes('\\int') || inner.includes('\\frac') || inner.includes('\\Delta')) {
-      const eq = `$$${inner}$$`;
-      if (!extractedRawFormulas.includes(eq)) extractedRawFormulas.push(eq);
-    }
-  }
-
-  const subjectFormulaBank =
-    subject === 'Physics'
-      ? [
-          {
-            title: `${chapter} — Fundamental Dynamical Law`,
-            formula: '$$\\vec{F}_{\\text{net}} = \\frac{d\\vec{p}}{dt} = m\\vec{a}, \\quad W_{\\text{all}} = \\int_{r_1}^{r_2} \\vec{F}\\cdot d\\vec{r} = \\Delta K$$',
-            variables: '$\\vec{F}_{\\text{net}}$: Net resultant force, $\\vec{p} = m\\vec{v}$: Linear momentum, $W_{\\text{all}}$: Total work done by all forces, $\\Delta K$: Change in kinetic energy',
-            units: 'Force: $\\text{N} = \\text{kg}\\cdot\\text{m/s}^2$ $[M^1L^1T^{-2}]$, Work/Energy: $\\text{J} = \\text{N}\\cdot\\text{m}$ $[M^1L^2T^{-2}]$',
-            notes: `Primary conservation and work-energy relation for ${chapter}.`,
-          },
-          {
-            title: `${chapter} — Rotational & Field Conservation Relation`,
-            formula: '$$\\vec{\\tau}_{\\text{ext}} = \\frac{d\\vec{L}}{dt} = I\\vec{\\alpha}, \\quad I = I_{\\text{cm}} + Md^2, \\quad K_{\\text{total}} = \\frac{1}{2}Mv_{\\text{cm}}^2 + \\frac{1}{2}I_{\\text{cm}}\\omega^2$$',
-            variables: '$\\vec{\\tau}_{\\text{ext}}$: External torque, $\\vec{L}$: Angular momentum, $I_{\\text{cm}}$: Centroidal moment of inertia, $d$: Parallel axis separation',
-            units: 'Torque: $\\text{N}\\cdot\\text{m}$, Moment of Inertia: $\\text{kg}\\cdot\\text{m}^2$ $[M^1L^2T^0]$, $\\omega$: $\\text{rad/s}$',
-            notes: `Used for multi-body dynamics, pure rolling ($v_{\\text{cm}} = \\omega R$), and angular impulse calculations.`,
-          },
-          {
-            title: `${chapter} — Physical Constants & Limiting Relations`,
-            formula: '$$g = 9.8\\text{ m/s}^2, \\quad \\varepsilon_0 = 8.854 \\times 10^{-12}\\text{ C}^2/\\text{N}\\cdot\\text{m}^2, \\quad c = 3 \\times 10^8\\text{ m/s}$$',
-            variables: '$g$: Acceleration due to gravity, $\\varepsilon_0$: Vacuum permittivity, $c$: Speed of light in vacuum',
-            units: 'Standard SI Base & Derived Units',
-            notes: `Essential constants and dimensional scaling for ${chapter} numerical problems.`,
-          },
-        ]
-      : subject === 'Chemistry'
-      ? [
-          {
-            title: `${chapter} — Thermodynamic & Electrochemical Equilibrium`,
-            formula: '$$\\Delta G^\\circ = -nFE^\\circ_{\\text{cell}} = -2.303\\,RT \\log_{10} K_{\\text{eq}}, \\quad E_{\\text{cell}} = E^\\circ_{\\text{cell}} - \\frac{0.0591}{n}\\log_{10} Q$$',
-            variables: '$\\Delta G^\\circ$: Standard Gibbs free energy, $n$: Moles of electrons transferred, $F = 96485\\text{ C/mol}$: Faraday constant, $Q$: Reaction quotient',
-            units: '$\\Delta G^\\circ$: $\\text{J/mol}$ or $\\text{kJ/mol}$, $E_{\\text{cell}}$: $\\text{V}$ (Volts), $R = 8.314\\text{ J}\\cdot\\text{mol}^{-1}\\text{K}^{-1}$',
-            notes: `Connects cell potential, reaction spontaneity, and equilibrium constant at $T = 298\\text{ K}$.`,
-          },
-          {
-            title: `${chapter} — Rate Law, Activation Energy & Molecular Properties`,
-            formula: '$$k = A e^{-E_a / RT}, \\quad \\ln\\left(\\frac{k_2}{k_1}\\right) = \\frac{E_a}{R}\\left(\\frac{1}{T_1} - \\frac{1}{T_2}\\right), \\quad \\mu_{\\text{spin}} = \\sqrt{n(n+2)}\\text{ BM}$$',
-            variables: '$k$: Rate constant, $E_a$: Activation energy, $A$: Arrhenius pre-exponential factor, $n$: Number of unpaired electrons',
-            units: '$E_a$: $\\text{J/mol}$, Magnetic moment $\\mu$: Bohr Magneton ($\\text{BM}$)',
-            notes: `Governs temperature dependence of reaction rates and electronic spin properties in ${chapter}.`,
-          },
-          {
-            title: `${chapter} — Standard Chemical Constants & Colligative Relations`,
-            formula: '$$\\pi = iCRT, \\quad \\Delta T_b = i K_b m, \\quad N_A = 6.022 \\times 10^{23}\\text{ mol}^{-1}$$',
-            variables: '$i$: van’t Hoff factor, $C$: Molarity, $m$: Molality, $K_b$: Ebullioscopic constant',
-            units: 'Concentration: $\\text{mol/L}$ ($\\text{M}$) or $\\text{mol/kg}$ ($\\text{m}$), Pressure: $\\text{atm}$ or $\\text{Pa}$',
-            notes: `Always account for dissociation/association via the van’t Hoff factor $i = 1 + (\\nu - 1)\\alpha$.`,
-          },
-        ]
-      : [
-          {
-            title: `${chapter} — Fundamental Calculus & King’s Definite Integral Property`,
-            formula: '$$\\int_{a}^{b} f(x)\\,dx = \\int_{a}^{b} f(a+b-x)\\,dx, \\quad \\frac{d}{dx}\\left[\\int_{g(x)}^{h(x)} f(t)\\,dt\\right] = f(h(x))h\'(x) - f(g(x))g\'(x)$$',
-            variables: '$a, b$: Lower and upper limits of integration, $g(x), h(x)$: Differentiable variable limits (Leibniz Rule)',
-            units: 'Dimensionless analytical identity / Area in square units',
-            notes: `First-choice property for definite integrals and functional equations in ${chapter}.`,
-          },
-          {
-            title: `${chapter} — Algebraic, Matrix & Vector Identities`,
-            formula: '$$|\\text{adj}(A)| = |A|^{n-1}, \\quad A^{-1} = \\frac{\\text{adj}(A)}{|A|}, \\quad |\\vec{a} \\times \\vec{b}|^2 + (\\vec{a}\\cdot\\vec{b})^2 = |\\vec{a}|^2|\\vec{b}|^2$$',
-            variables: '$A$: Non-singular square matrix of order $n$, $\\text{adj}(A)$: Adjoint matrix, $\\vec{a}, \\vec{b}$: Vectors in $\\mathbb{R}^3$',
-            units: 'Order $n \\in \\mathbb{N}$, Angle $\\theta \\in [0, \\pi]$ radians',
-            notes: `High-frequency identity for JEE Main & Advanced linear algebra and 3D geometry problems.`,
-          },
-          {
-            title: `${chapter} — Series Expansion & Limiting Behavior`,
-            formula: '$$\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1, \\quad \\lim_{x \\to 0} \\frac{e^x - 1}{x} = 1, \\quad e^{i\\theta} = \\cos\\theta + i\\sin\\theta$$',
-            variables: '$x$: Real or complex argument in radians, $\\theta$: Principal argument ($-\\pi < \\theta \\le \\pi$)',
-            units: 'Angles strictly in radians for calculus limits',
-            notes: `Use Taylor expansion up to the first non-vanishing degree when L’Hôpital’s rule becomes lengthy.`,
-          },
-        ];
-
-  const defaultFormulaBySubject = subjectFormulaBank[0].formula;
-
-  const pages: NotePageData[] = [];
-  const totalPages = Math.max(3, Math.min(12, Math.ceil(rawParagraphs.length / 2) || 3));
-
-  for (let p = 1; p <= totalPages; p++) {
-    const sliceStart = (p - 1) * 2;
-    const chunk = rawParagraphs.slice(sliceStart, sliceStart + 2);
-    const startHr = Math.floor(((p - 1) / totalPages) * durationHours);
-    const endHr = Math.min(durationHours, Math.ceil((p / totalPages) * durationHours));
-    const timestampRange =
-      sourceType === 'youtube'
-        ? `${String(startHr).padStart(2, '0')}:00:00 – ${String(endHr).padStart(2, '0')}:00:00`
-        : undefined;
-
-    const primaryText =
-      chunk[0] ||
-      `**Complete Theoretical Foundation of ${chapter} (${subject})**: Every physical, chemical, or mathematical system in **${chapter}** is governed by conservation principles, constitutive equations, and boundary conditions. Understanding the exact assumptions behind each law is essential before applying any formula.`;
-
-    const secondaryText =
-      chunk[1] ||
-      `**Step-by-Step Analytical Proof & Derivation**: Starting from first principles, isolate the differential element or state variable, apply the governing law for **${chapter}**, and integrate or simplify across the domain limits to obtain the closed-form result.`;
-
-    const pageFormulaEntry = subjectFormulaBank[(p - 1) % subjectFormulaBank.length];
-    const extraExtractedFormula = extractedRawFormulas[p - 1];
-
-    pages.push({
-      pageNumber: p,
-      heading:
-        p === 1
-          ? `${chapter} — Complete Theory, First Principles & Derivations`
-          : p === 2
-          ? `${chapter} — Mathematical Proofs, Solved Examples & Methods`
-          : `${chapter} — Edge Cases, Exam Traps & Complete Formula Compendium (Part ${p - 2})`,
-      timestampRange,
-      sections: [
-        {
-          numberTitle: `${p}.1 Complete Theory, Step-by-Step Derivations & Proofs`,
-          paragraphs: [
-            primaryText,
-            secondaryText,
-            `**Step-by-Step Derivation Walkthrough**: (Step 1) Define the reference frame, domain, or standard state for **${chapter}**. (Step 2) Express the infinitesimal or algebraic relationship linking the primary variables (${pageFormulaEntry.variables}). (Step 3) Apply boundary conditions and combine terms to arrive at the governing equation below.`,
-          ],
-          bullets: [
-            `**Fundamental Law & Physical Meaning**: Master the exact statement and domain of validity for **${chapter}** before plugging in numerical values.`,
-            `**Derivation Prerequisite**: Verify whether coefficients are constant or variable across the interval before integrating or algebraic elimination.`,
-          ],
-          formulas: extraExtractedFormula
-            ? [extraExtractedFormula, pageFormulaEntry.formula]
-            : [pageFormulaEntry.formula],
-        },
-        {
-          numberTitle: `${p}.2 Solved Numerical Examples & Step-by-Step Problem-Solving Methods`,
-          paragraphs: [
-            `**Representative JEE Main & Advanced Solved Example (Page ${p})**: Consider a standard system in **${chapter}** where initial state parameters are specified in SI units and we must determine the final state response and rate of change.`,
-            `**Systematic 4-Step Solution Method**:\n1. **Identify Given Data & Target Unknown**: Convert all given quantities into consistent units (${pageFormulaEntry.units}).\n2. **Select Governing Equation**: Apply ${pageFormulaEntry.title} without premature numerical approximation.\n3. **Symbolic Simplification**: Cancel common factors symbolically to minimize arithmetic errors.\n4. **Final Substitution & Verification**: Compute the numerical answer and verify dimensional homogeneity.`,
-          ],
-          bullets: [
-            `**Speed Heuristic for Objective MCQs**: Check dimensional consistency and extreme limiting cases ($x \\to 0$ or $x \\to \\infty$) to eliminate 2 distractor options immediately.`,
-            `**Precision Rule for Section B Numericals**: Retain full fractional or radical form until the very last line of calculation.`,
-          ],
-          formulas: [subjectFormulaBank[p % subjectFormulaBank.length].formula],
-        },
-        {
-          numberTitle: `${p}.3 Important Exceptions, Edge Cases & Common JEE Exam Traps`,
-          paragraphs: [
-            `*Critical Boundary Conditions & Exceptions in ${chapter}*: Paper setters frequently test non-ideal regimes, discontinuous boundaries, or special electronic/geometric configurations where textbook shortcuts fail.`,
-          ],
-          bullets: [
-            `*Common Exam Trap 1 (Frame & Sign Convention)*: Never apply standard formulas across non-inertial frames, non-standard electrode conditions, or undefined domain points without adding the correction term.`,
-            `*Common Exam Trap 2 (Logarithm & Unit Conversion)*: Watch out for the factor of $2.303$ between natural log ($\\ln$) and base-10 log ($\\log_{10}$), and always convert $\\text{cm}$, $\\text{g}$, or $^\\circ\\text{C}$ to $\\text{m}$, $\\text{kg}$, and $\\text{K}$.`,
-            `*Edge Case Alert*: When net external force, torque, orfree energy change equals zero, explicitly check whether the system is in stable, unstable, or neutral equilibrium.`,
-          ],
-        },
-        {
-          numberTitle: `${p}.4 Chapter Formulas, Constants & Dimensional Units`,
-          paragraphs: [
-            `**Variables & Definitions**: ${pageFormulaEntry.variables}`,
-            `**Standard Units & Dimensions**: ${pageFormulaEntry.units} — ${pageFormulaEntry.notes}`,
-          ],
-          bullets: [
-            `**Formula Book Sync**: Every equation and constant in this section is automatically indexed into your Revise Formula Book for rapid pre-exam review.`,
-          ],
-          formulas: [
-            pageFormulaEntry.formula,
-            subjectFormulaBank[(p + 1) % subjectFormulaBank.length].formula,
-          ],
-        },
-      ],
-      aiTutorSummary: {
-        english: `Page ${p} of "${title}" provides the complete theory, step-by-step derivations, solved numerical methodology, exam traps, and dimensional formulas for ${chapter}.`,
-        hinglish: `"${title}" ke Page ${p} mein ${chapter} ki complete theory, step-by-step derivations, solved examples, important exam traps aur saare formulas detail mein diye gaye hain.`,
-      },
-    });
-  }
-
-  const mindMapNodes: MindMapNodeItem[] = [
-    {
-      id: `${materialId}-node-1`,
-      title: `${chapter}: Core Law`,
-      subtitle: `Primary governing principle extracted from ${title}`,
-      colorClass: 'bg-[#EEF2FF] dark:bg-indigo-950/60',
-      borderClass: 'border-indigo-400 dark:border-indigo-500',
-      pageRef: 'Page 1',
-      badgeType: 'High Weightage',
-      formulaLatex: defaultFormulaBySubject.replace(/\$\$/g, '$'),
-      definition:
-        rawParagraphs[0]?.slice(0, 220) ||
-        `**Fundamental Law of ${chapter}**: Establishes the quantitative relationship between state variables in ${subject}.`,
-      example: `Direct application in JEE Main Section A & Advanced multi-concept problems on **${chapter}**.`,
-      commonTrap: `*Common Exam Trap*: Applying the standard formula without checking equilibrium or frame validity.`,
-      subNodes: [
-        {
-          id: `${materialId}-sub-1a`,
-          label: 'State Variables & Units',
-          formulaLatex: subject === 'Physics' ? '$[M^1 L^2 T^{-2}]$' : subject === 'Chemistry' ? '$\\Delta H = \\Delta U + \\Delta n_g RT$' : '$f: A \\to B$',
-          microNote: 'Always convert to standard SI units before substitution.',
-        },
-        {
-          id: `${materialId}-sub-1b`,
-          label: 'Limiting Case Check',
-          formulaLatex: '$\\lim_{x \\to 0} f(x)$',
-          microNote: 'Verify behavior at zero and infinity to eliminate wrong MCQ options fast.',
-        },
-      ],
-    },
-    {
-      id: `${materialId}-node-2`,
-      title: 'Mathematical Formulation',
-      subtitle: 'Key equations & differential/integral relations',
-      colorClass: 'bg-[#ECFDF5] dark:bg-emerald-950/50',
-      borderClass: 'border-emerald-400 dark:border-emerald-500',
-      pageRef: 'Page 2',
-      badgeType: 'Formula',
-      formulaLatex: defaultFormulaBySubject.replace(/\$\$/g, '$'),
-      definition:
-        rawParagraphs[1]?.slice(0, 220) ||
-        `**Analytical Equation**: Connects rate of change and conserved quantities in **${chapter}**.`,
-      example: `Used in Section B numerical value questions requiring exact decimal or integer precision.`,
-      commonTrap: `*Sign & Log Base Error*: Confusing natural logarithm $\\ln(x)$ with $\\log_{10}(x)$ (factor of $2.303$).`,
-      subNodes: [
-        {
-          id: `${materialId}-sub-2a`,
-          label: 'Differential Form',
-          formulaLatex: '$\\frac{dy}{dx} = f\'(x)$',
-          microNote: 'Instantaneous slope / rate of reaction or motion.',
-        },
-        {
-          id: `${materialId}-sub-2b`,
-          label: 'Integrated Form',
-          formulaLatex: '$\\int_{t_1}^{t_2} r(t)\\,dt$',
-          microNote: 'Accumulated change over a finite interval.',
-        },
-      ],
-    },
-    {
-      id: `${materialId}-node-3`,
-      title: 'Exceptions & Boundary Cases',
-      subtitle: 'Special conditions tested in JEE Advanced',
-      colorClass: 'bg-[#FFFBEB] dark:bg-amber-950/50',
-      borderClass: 'border-amber-400 dark:border-amber-500',
-      pageRef: 'Page 3',
-      badgeType: 'Exception Trap',
-      formulaLatex: subject === 'Chemistry' ? '$Z_{\\text{eff}} = Z - \\sigma$' : '$\\Delta \\ge 0$',
-      definition:
-        rawParagraphs[2]?.slice(0, 220) ||
-        `*Critical Exceptions in ${chapter}*: Non-ideal behavior and anomalous configurations frequently targeted by paper setters.`,
-      example: `Multi-choice assertion-reason and statement-based questions in JEE Main & Advanced.`,
-      commonTrap: `*Over-generalization Trap*: Assuming linear proportionality holds outside the valid regime.`,
-      subNodes: [
-        {
-          id: `${materialId}-sub-3a`,
-          label: 'Non-Ideal Deviation',
-          formulaLatex: '$Z = \\frac{PV}{nRT} \\neq 1$',
-          microNote: 'Account for correction terms at high pressure or strong coupling.',
-        },
-      ],
-    },
-    {
-      id: `${materialId}-node-4`,
-      title: 'Numerical Problem Strategy',
-      subtitle: 'Step-by-step algorithm for Section B & Advanced',
-      colorClass: 'bg-[#EEF2FF] dark:bg-indigo-950/60',
-      borderClass: 'border-indigo-400 dark:border-indigo-500',
-      pageRef: 'Page 3',
-      badgeType: 'High Weightage',
-      formulaLatex: '$\\text{Accuracy} \\implies +4\\text{ Marks}$',
-      definition: `**Systematic Solver Workflow**: 1) Identify system boundaries, 2) Write governing equations, 3) Solve symbolically before plugging numbers.`,
-      example: `Saves 45+ seconds per question during 3-hour NTA CBT simulation.`,
-      commonTrap: `*Premature Rounding*: Never round intermediate steps in Section B numerical questions.`,
-      subNodes: [
-        {
-          id: `${materialId}-sub-4a`,
-          label: 'Dimensional Verification',
-          formulaLatex: '$\\text{LHS} \\equiv \\text{RHS}$',
-          microNote: 'Quickly eliminates dimensionally inconsistent options.',
-        },
-      ],
-    },
-  ];
-
-  const stickyNotes: StickyNoteData[] = [
-    {
-      id: `${materialId}-sn-1`,
-      title: `${chapter} — Key Formula Hook`,
-      body: `**Core Formula**: ${defaultFormulaBySubject.replace(/\$\$/g, '$')} — *Always verify standard states and units first!*`,
-      subject,
-      color: 'amber',
-    },
-    {
-      id: `${materialId}-sn-2`,
-      title: `${chapter} — Exam Trap Alert`,
-      body: rawParagraphs[0]
-        ? `${rawParagraphs[0].slice(0, 160)}...`
-        : `*Watch out for sign conventions and boundary conditions in ${chapter} numericals.*`,
-      subject,
-      color: 'emerald',
-    },
-  ];
-
-  const formulas: FormulaCardEntry[] = [
-    ...subjectFormulaBank.map((item, idx) => ({
-      id: `${materialId}-fb-${idx + 1}`,
-      subject,
-      chapter,
-      title: item.title,
-      formula: item.formula,
-      variables: item.variables,
-      units: item.units,
-      notes: `${item.notes} (Source: "${title}")`,
-    })),
-    ...extractedRawFormulas.map((eq, idx) => ({
-      id: `${materialId}-fb-ext-${idx + 1}`,
-      subject,
-      chapter,
-      title: `${chapter} — Extracted Equation #${idx + 1}`,
-      formula: eq,
-      variables: `Extracted directly from uploaded material "${title}"`,
-      units: 'Standard SI / Analytical Units',
-      notes: `Directly scanned from your uploaded ${sourceType.toUpperCase()} material.`,
-    })),
-  ];
-
-  const quizQuestions: CBTQuestion[] = CBT_MOCK_QUESTIONS.filter(
-    (q) => q.subject === subject
-  ).slice(0, 10);
-
-  return {
-    materialId,
-    title,
-    subject,
-    chapter,
-    sourceType,
-    originalFileUrl,
-    originalMimeType,
-    rawText: cleanText,
-    pages,
-    mindMapNodes,
-    stickyNotes,
-    formulas,
-    quizQuestions,
-  };
+  return buildGroundedMaterialStudyBundle({
+    ...params,
+    fallbackQuizPool: typeof CBT_MOCK_QUESTIONS !== 'undefined' ? CBT_MOCK_QUESTIONS : [],
+  });
 }
 
 // Clean Zero-State Exports (Empty until user uploads material)
@@ -884,13 +525,14 @@ const BASE_MATH_NUMERICALS: Omit<CBTQuestion, 'id' | 'number'>[] = [
 ];
 
 /**
- * Generates the official 75-Question NTA JEE Main Paper:
+ * Generates a full 75-Question NTA JEE Main 2027 Blueprint Mock:
  * - Q1–Q20: Physics Section A (20 MCQs, +4/-1)
- * - Q21–Q25: Physics Section B (5 Numericals, +4/0, no negative marking)
+ * - Q21–Q25: Physics Section B (5 Compulsory Numericals, +4/-1)
  * - Q26–Q45: Chemistry Section A (20 MCQs, +4/-1)
- * - Q46–Q50: Chemistry Section B (5 Numericals, +4/0, no negative marking)
+ * - Q46–Q50: Chemistry Section B (5 Compulsory Numericals, +4/-1)
  * - Q51–Q70: Mathematics Section A (20 MCQs, +4/-1)
- * - Q71–Q75: Mathematics Section B (5 Numericals, +4/0, no negative marking)
+ * - Q71–Q75: Mathematics Section B (5 Compulsory Numericals, +4/-1)
+ * Base items are tagged RECONSTRUCTED_WITH_SOURCE; drill variants are explicitly labeled LEARNMATE_ORIGINAL.
  */
 export function buildFull75JeeMainQuestions(): CBTQuestion[] {
   const result: CBTQuestion[] = [];
@@ -903,30 +545,39 @@ export function buildFull75JeeMainQuestions(): CBTQuestion[] {
     for (let i = 0; i < 20; i++) {
       const tpl = mcqs[i % mcqs.length];
       const variantNum = Math.floor(i / mcqs.length) + 1;
+      const isVariant = variantNum > 1;
       result.push({
         ...tpl,
         id: `q${qNum}`,
         number: qNum,
         examType: 'JEE Main',
-        stem: variantNum > 1 ? `[Shift Variant ${variantNum}] ${tpl.stem}` : tpl.stem,
+        examVersion: 'jee-main-2027-paper1',
+        provenanceType: isVariant ? 'LEARNMATE_ORIGINAL' : 'RECONSTRUCTED_WITH_SOURCE',
+        verificationStatus: isVariant ? 'unverified' : 'reconstructed',
+        pyqTag: isVariant ? `LearnMate Practice Drill (Variant ${variantNum})` : tpl.pyqTag,
+        stem: isVariant ? `[Practice Variant ${variantNum}] ${tpl.stem}` : tpl.stem,
       });
       qNum++;
     }
     for (let i = 0; i < 5; i++) {
       const tpl = nums[i % nums.length];
       const factor = i + 1;
+      const isVariant = i > 0;
       const baseAns = tpl.numericalAnswer ?? 5;
       result.push({
         ...tpl,
         id: `q${qNum}`,
         number: qNum,
         examType: 'JEE Main',
+        examVersion: 'jee-main-2027-paper1',
         section: 'Section B',
-        numericalAnswer: i === 0 ? baseAns : baseAns,
-        stem:
-          i === 0
-            ? tpl.stem
-            : `[Compulsory Numerical ${factor}/5] ${tpl.stem}`,
+        provenanceType: isVariant ? 'LEARNMATE_ORIGINAL' : 'RECONSTRUCTED_WITH_SOURCE',
+        verificationStatus: isVariant ? 'unverified' : 'reconstructed',
+        pyqTag: isVariant ? `LearnMate Section B Drill ${factor}/5` : tpl.pyqTag,
+        numericalAnswer: baseAns,
+        stem: isVariant
+          ? `[Compulsory Numerical Drill ${factor}/5] ${tpl.stem}`
+          : tpl.stem,
       });
       qNum++;
     }

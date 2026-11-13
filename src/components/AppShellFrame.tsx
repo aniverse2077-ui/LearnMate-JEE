@@ -34,7 +34,7 @@ export interface AppShellFrameProps {
   onSelectStudySubTab: (sub: StudySubTabId) => void;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
-  subscriptionTier: 'free' | 'pro';
+  subscriptionTier: 'free' | 'pro' | 'institute';
   onOpenProModal: () => void;
   materials: MaterialItem[];
   selectedMaterial: MaterialItem | null;
@@ -103,12 +103,13 @@ export const AppShellFrame: React.FC<AppShellFrameProps> = ({
         darkMode ? 'bg-slate-950 text-slate-100' : 'bg-[#F8FAFC] text-slate-900'
       }`}
     >
-      {/* STREAMLINED TOP NAVBAR (Full Desktop Edge-to-Edge) */}
-      <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 px-4 lg:px-8 h-16 flex items-center justify-between gap-4 w-full">
-        <div className="flex items-center gap-3">
+      {/* STREAMLINED TOP NAVBAR (Responsive Mobile/Tablet + Full Desktop Edge-to-Edge) */}
+      <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 px-3 sm:px-4 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4 w-full">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
+            type="button"
             onClick={onToggleSidebar}
-            className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
+            className="hidden lg:inline-flex p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all cursor-pointer shrink-0"
             title={sidebarCollapsed ? 'Expand Navigation Sidebar' : 'Collapse Navigation Sidebar'}
             aria-label="Toggle Left Navigation Sidebar"
           >
@@ -120,17 +121,18 @@ export const AppShellFrame: React.FC<AppShellFrameProps> = ({
           </button>
 
           <button
+            type="button"
             onClick={() => onSelectTab('Home')}
-            className="flex items-center gap-2.5 text-left cursor-pointer group"
+            className="flex items-center gap-2 text-left cursor-pointer group min-w-0"
           >
-            <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-base shadow-xs group-hover:bg-indigo-700 transition-colors">
-              <GraduationCap className="w-5 h-5" />
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-base shadow-xs group-hover:bg-indigo-700 transition-colors shrink-0">
+              <GraduationCap className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-lg tracking-tight text-slate-900 dark:text-white">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="font-extrabold text-base sm:text-lg tracking-tight text-slate-900 dark:text-white truncate">
                 LearnMate
               </span>
-              <span className="px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider bg-indigo-50 text-indigo-600 rounded-md border border-indigo-200/70">
+              <span className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider bg-indigo-50 text-indigo-600 rounded-md border border-indigo-200/70">
                 JEE
               </span>
             </div>
@@ -138,52 +140,63 @@ export const AppShellFrame: React.FC<AppShellFrameProps> = ({
         </div>
 
         {/* Right: Global Actions & Utilities ONLY */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           <button
+            type="button"
             onClick={onOpenProModal}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-extrabold transition-all cursor-pointer ${
-              subscriptionTier === 'pro'
+            className={`hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-extrabold transition-all cursor-pointer ${
+              subscriptionTier === 'pro' || subscriptionTier === 'institute'
                 ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
                 : 'border-indigo-200 bg-indigo-50/70 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300'
             }`}
-            title="View Free vs Pro Aspirant Subscription Plan"
+            title="View Commercial Student & Institute Plans"
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-500" />
             <span>
-              {subscriptionTier === 'pro'
+              {subscriptionTier === 'institute'
+                ? 'INSTITUTE SEAT'
+                : subscriptionTier === 'pro'
                 ? 'PRO ASPIRANT'
                 : `Free • ${Math.min(5, materials.length)}/5 Scans`}
             </span>
           </button>
 
           <button
+            type="button"
             onClick={onOpenAddMaterial}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-xs transition-all cursor-pointer"
+            aria-label="Add Material"
+            className="inline-flex items-center gap-1.5 px-2.5 lg:px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-xs transition-all cursor-pointer shrink-0"
           >
             <Plus className="w-4 h-4" />
-            <span>Add Material</span>
+            <span className="hidden lg:inline">Add Material</span>
+            <span className="hidden md:inline lg:hidden">Add</span>
           </button>
 
           <button
+            type="button"
             onClick={() => onSetSearchModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-xs font-bold text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
+            aria-label="Search"
+            className="inline-flex items-center gap-1.5 p-2 lg:px-3 lg:py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-xs font-bold text-slate-700 dark:text-slate-200 transition-all cursor-pointer shrink-0"
             title="Global Search (Cmd+K)"
           >
             <Search className="w-3.5 h-3.5 text-slate-500" />
-            <span className="hidden sm:inline">Search</span>
+            <span className="hidden lg:inline">Search</span>
           </button>
 
           <button
+            type="button"
             onClick={onOpenStudyTools}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-xs font-bold text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
+            aria-label="Study Tools"
+            className="inline-flex items-center gap-1.5 p-2 lg:px-3 lg:py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-xs font-bold text-slate-700 dark:text-slate-200 transition-all cursor-pointer shrink-0"
           >
             <Grid className="w-3.5 h-3.5 text-indigo-600" />
-            <span className="hidden sm:inline leading-tight text-left">Study Tools</span>
+            <span className="hidden lg:inline leading-tight text-left">Study Tools</span>
           </button>
 
           <button
+            type="button"
             onClick={onToggleFocusTimer}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-extrabold transition-all cursor-pointer ${
+            className={`hidden md:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-extrabold transition-all cursor-pointer ${
               focusTimerOpen || focusRunning
                 ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
                 : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-slate-800 dark:text-slate-200'
@@ -194,16 +207,20 @@ export const AppShellFrame: React.FC<AppShellFrameProps> = ({
           </button>
 
           <button
+            type="button"
             onClick={onToggleDarkMode}
+            aria-label="Toggle Theme"
             className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-slate-600 dark:text-slate-300 transition-all cursor-pointer"
             title="Toggle Theme"
           >
             {darkMode ? <Sun className="w-4 h-4 text-amber-500" /> : <Moon className="w-4 h-4" />}
           </button>
 
-          <div className="relative">
+          <div className="relative hidden sm:block">
             <button
+              type="button"
               onClick={onToggleNotifications}
+              aria-label="Notifications"
               className="relative p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-slate-600 dark:text-slate-300 transition-all cursor-pointer"
               title="Notifications"
             >
@@ -266,18 +283,21 @@ export const AppShellFrame: React.FC<AppShellFrameProps> = ({
           </div>
 
           <button
+            type="button"
             onClick={onOpenVoiceTutor}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/80 dark:bg-indigo-950/70 hover:bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:text-indigo-300 transition-all cursor-pointer"
+            aria-label="Voice Tutor"
+            className="inline-flex items-center gap-1.5 p-2 lg:px-3 lg:py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/80 dark:bg-indigo-950/70 hover:bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:text-indigo-300 transition-all cursor-pointer shrink-0"
             title="Open Live Classroom Voice JEE Tutor"
           >
             <Mic className="w-3.5 h-3.5 text-indigo-600" />
-            <span className="hidden md:inline">Voice Tutor</span>
+            <span className="hidden lg:inline">Voice Tutor</span>
           </button>
 
           <button
+            type="button"
             onClick={onOpenProfileModal}
             style={{ backgroundColor: avatarColor || '#4F46E5' }}
-            className="w-9 h-9 rounded-full text-white font-extrabold text-xs flex items-center justify-center shadow-xs transition-all cursor-pointer ring-2 ring-indigo-100 hover:opacity-90"
+            className="w-8 h-8 sm:w-9 sm:h-9 rounded-full text-white font-extrabold text-xs flex items-center justify-center shadow-xs transition-all cursor-pointer ring-2 ring-indigo-100 hover:opacity-90 shrink-0"
             title="Open Student Profile & Account Settings"
           >
             {userInitial}
@@ -285,10 +305,11 @@ export const AppShellFrame: React.FC<AppShellFrameProps> = ({
         </div>
       </header>
 
-      {/* FULL-DESKTOP SHELL: COLLAPSIBLE LEFT SIDEBAR + 100% FLUID STAGE */}
+      {/* FULL-DESKTOP SHELL (>=1024px): SIDEBAR + 100% FLUID STAGE */}
       <div className="flex min-h-[calc(100vh-4rem)] w-full">
         <aside
-          className={`shrink-0 bg-white dark:bg-slate-900 border-r border-slate-200/90 dark:border-slate-800 transition-all duration-200 flex flex-col justify-between sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto ${
+          data-testid="desktop-sidebar"
+          className={`hidden lg:flex shrink-0 bg-white dark:bg-slate-900 border-r border-slate-200/90 dark:border-slate-800 transition-all duration-200 flex-col justify-between sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto ${
             sidebarCollapsed ? 'w-[72px] px-2.5 py-4' : 'w-64 px-3.5 py-5'
           }`}
         >
@@ -428,8 +449,44 @@ export const AppShellFrame: React.FC<AppShellFrameProps> = ({
           </div>
         </aside>
 
-        <main className="flex-1 min-w-0 w-full pb-20">{children}</main>
+        <main className="flex-1 min-w-0 w-full pb-24 lg:pb-12">{children}</main>
       </div>
+
+      {/* MOBILE & TABLET (<1024px) PERMANENT 5-TAB BOTTOM NAVIGATION BAR (NO COLLAPSIBLE SIDEBAR) */}
+      <nav
+        aria-label="Primary Mobile Navigation"
+        data-testid="mobile-bottom-nav"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-1.5 py-1 flex items-center justify-around shadow-[0_-4px_16px_rgba(15,23,42,0.06)]"
+      >
+        {(
+          [
+            { id: 'Home', label: 'Home', icon: Home },
+            { id: 'Study', label: 'Study', icon: BookOpen },
+            { id: 'Practice', label: 'Practice', icon: Target },
+            { id: 'Revise', label: 'Revise', icon: Layers },
+            { id: 'Progress', label: 'Progress', icon: BarChart3 },
+          ] as const
+        ).map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => onSelectTab(tab.id)}
+              aria-current={isActive ? 'page' : undefined}
+              className={`min-h-[44px] min-w-[44px] flex-1 flex flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1 text-[11px] font-extrabold transition-colors cursor-pointer ${
+                isActive
+                  ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-50/80 dark:bg-indigo-950/60'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Icon className="w-4 h-4 shrink-0" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </nav>
 
       {/* Global Search Command Modal (Cmd+K) */}
       {searchModalOpen && (

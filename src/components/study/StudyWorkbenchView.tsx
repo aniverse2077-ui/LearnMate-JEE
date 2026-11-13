@@ -75,16 +75,24 @@ export const StudyWorkbenchView: React.FC<StudyWorkbenchViewProps> = (props) => 
   const [socraticPrompt, setSocraticPrompt] = useState<string>('');
   const [clueCoins, setClueCoins] = useState<number>(6);
   const [hintStep, setHintStep] = useState<1 | 2 | 3 | 'full'>(1);
+  const [tutorDifficulty, setTutorDifficulty] = useState<'board' | 'jee_main' | 'jee_advanced'>('jee_main');
+  const [tutorContextMode, setTutorContextMode] = useState<'strict_material' | 'open_jee'>('strict_material');
   const [socraticOutput, setSocraticOutput] = useState<string>('');
+  const [socraticCitations, setSocraticCitations] = useState<{ pageNumber: number; excerpt: string }[]>([]);
   const [socraticLoading, setSocraticLoading] = useState<boolean>(false);
   const [upstreamError, setUpstreamError] = useState<StructuredUpstreamError | null>(null);
 
   const activeShard = activeShardIdx !== null ? shards[activeShardIdx] : null;
 
-  const handleRequestSocraticHint = async (targetStep: 1 | 2 | 3 | 'full') => {
+  const handleRequestSocraticHint = async (
+    targetStep: 1 | 2 | 3 | 'full',
+    actionKind: 'socratic' | 'unit_check' = 'socratic'
+  ) => {
     const queryText =
-      socraticPrompt.trim() ||
-      `Help me derive and solve a JEE problem on ${activeChapter} (${activeSubject}).`;
+      actionKind === 'unit_check'
+        ? `Perform a dimensional consistency and SI units check on formulas/problem: ${socraticPrompt.trim() || activeChapter}.`
+        : socraticPrompt.trim() ||
+          `Help me derive and solve a JEE problem on ${activeChapter} (${activeSubject}).`;
     setHintStep(targetStep);
     setSocraticLoading(true);
     setUpstreamError(null);
@@ -93,9 +101,15 @@ export const StudyWorkbenchView: React.FC<StudyWorkbenchViewProps> = (props) => 
       setClueCoins((c) => Math.max(0, c - 1));
     }
 
-    const res = await apiFetchWithAuth<{ text: string }>('/api/ai/think', {
+    const res = await apiFetchWithAuth<{
+      text: string;
+      citations?: { pageNumber: number; excerpt: string }[];
+    }>('/api/ai/tutor', {
       prompt: queryText,
+      materialId: props.selectedMaterial?.id,
       context: props.selectedMaterial?.contentSummary || activeChapter,
+      contextMode: tutorContextMode,
+      difficulty: tutorDifficulty,
       socraticHintStep: targetStep,
       teacherPersona: 'hinglish_faculty',
     });
@@ -106,6 +120,7 @@ export const StudyWorkbenchView: React.FC<StudyWorkbenchViewProps> = (props) => 
       return;
     }
     setSocraticOutput(res.data.text || '');
+    setSocraticCitations(Array.isArray(res.data.citations) ? res.data.citations : []);
   };
 
   return (
@@ -291,6 +306,53 @@ export const StudyWorkbenchView: React.FC<StudyWorkbenchViewProps> = (props) => 
                 </div>
               </div>
 
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-bold text-slate-600 dark:text-slate-300">Depth:</span>
+                  {(
+                    [
+                      { id: 'board', label: 'Board' },
+                      { id: 'jee_main', label: 'JEE Main' },
+                      { id: 'jee_advanced', label: 'JEE Advanced' },
+                    ] as const
+                  ).map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => setTutorDifficulty(d.id)}
+                      className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer ${
+                        tutorDifficulty === d.id
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setTutorContextMode((m) =>
+                        m === 'strict_material' ? 'open_jee' : 'strict_material'
+                      )
+                    }
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 font-bold cursor-pointer"
+                  >
+                    Mode: {tutorContextMode === 'strict_material' ? 'Strict Material' : 'Open JEE'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={socraticLoading}
+                    onClick={() => handleRequestSocraticHint('full', 'unit_check')}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 font-bold cursor-pointer"
+                  >
+                    Unit Check
+                  </button>
+                </div>
+              </div>
+
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -331,8 +393,24 @@ export const StudyWorkbenchView: React.FC<StudyWorkbenchViewProps> = (props) => 
               )}
 
               {socraticOutput && !upstreamError && (
-                <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs leading-relaxed">
+                <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs leading-relaxed space-y-2.5">
                   <MathRichText content={socraticOutput} />
+                  {socraticCitations.length > 0 && (
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-extrabold text-slate-400 uppercase">
+                        Grounded Citations:
+                      </span>
+                      {socraticCitations.map((c, ci) => (
+                        <span
+                          key={ci}
+                          title={c.excerpt}
+                          className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 text-[10px] font-bold"
+                        >
+                          Page {c.pageNumber}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

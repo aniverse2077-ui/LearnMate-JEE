@@ -18,6 +18,19 @@ export default defineConfig(({ mode }) => {
     }
   }
 
+  const isPlaceholderOrEmpty = (value?: string): boolean => {
+    if (!value || !value.trim()) return true;
+    return /placeholder|example|your[_-]|changeme|remixed-project-id|undefined|null/i.test(
+      value.trim()
+    );
+  };
+
+  const pickFirebaseValue = (runtimeVal?: string, envVal?: string): string => {
+    if (runtimeVal && !isPlaceholderOrEmpty(runtimeVal)) return runtimeVal.trim();
+    if (envVal && !isPlaceholderOrEmpty(envVal)) return envVal.trim();
+    return '';
+  };
+
   return {
     plugins: [
       react(),
@@ -25,25 +38,25 @@ export default defineConfig(({ mode }) => {
     ],
     define: {
       'import.meta.env.VITE_FIREBASE_API_KEY': JSON.stringify(
-        env.VITE_FIREBASE_API_KEY || runtimeConfig.apiKey || ''
+        pickFirebaseValue(runtimeConfig.apiKey, env.VITE_FIREBASE_API_KEY)
       ),
       'import.meta.env.VITE_FIREBASE_AUTH_DOMAIN': JSON.stringify(
-        env.VITE_FIREBASE_AUTH_DOMAIN || runtimeConfig.authDomain || ''
+        pickFirebaseValue(runtimeConfig.authDomain, env.VITE_FIREBASE_AUTH_DOMAIN)
       ),
       'import.meta.env.VITE_FIREBASE_PROJECT_ID': JSON.stringify(
-        env.VITE_FIREBASE_PROJECT_ID || runtimeConfig.projectId || ''
+        pickFirebaseValue(runtimeConfig.projectId, env.VITE_FIREBASE_PROJECT_ID)
       ),
       'import.meta.env.VITE_FIREBASE_STORAGE_BUCKET': JSON.stringify(
-        env.VITE_FIREBASE_STORAGE_BUCKET || runtimeConfig.storageBucket || ''
+        pickFirebaseValue(runtimeConfig.storageBucket, env.VITE_FIREBASE_STORAGE_BUCKET)
       ),
       'import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID': JSON.stringify(
-        env.VITE_FIREBASE_MESSAGING_SENDER_ID || runtimeConfig.messagingSenderId || ''
+        pickFirebaseValue(runtimeConfig.messagingSenderId, env.VITE_FIREBASE_MESSAGING_SENDER_ID)
       ),
       'import.meta.env.VITE_FIREBASE_APP_ID': JSON.stringify(
-        env.VITE_FIREBASE_APP_ID || runtimeConfig.appId || ''
+        pickFirebaseValue(runtimeConfig.appId, env.VITE_FIREBASE_APP_ID)
       ),
       'import.meta.env.VITE_FIREBASE_DATABASE_ID': JSON.stringify(
-        env.VITE_FIREBASE_DATABASE_ID || runtimeConfig.firestoreDatabaseId || ''
+        pickFirebaseValue(runtimeConfig.firestoreDatabaseId, env.VITE_FIREBASE_DATABASE_ID)
       ),
     },
     resolve: {
@@ -60,6 +73,21 @@ export default defineConfig(({ mode }) => {
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules/three')) return 'three-vendor';
+            if (id.includes('node_modules/pdfjs-dist')) return 'pdfjs-vendor';
+            if (id.includes('node_modules/katex') || id.includes('rehype-katex') || id.includes('remark-math')) {
+              return 'math-vendor';
+            }
+            if (id.includes('node_modules/firebase')) return 'firebase-vendor';
+            if (id.includes('node_modules')) return 'vendor';
+          },
+        },
+      },
     },
   };
 });

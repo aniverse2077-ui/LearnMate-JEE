@@ -1,0 +1,26 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Global Default-Deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Tenant-scoped study material binaries uploaded directly via Firebase Storage SDK
+    // Note: V4 signed GCS URLs minted by storageRoutes.ts enforce UID ownership & file existence server-side.
+    match /users/{userId}/materials/{fileName} {
+      allow get: if request.auth != null &&
+        request.auth.uid == userId &&
+        request.auth.token.email_verified == true;
+      allow list: if false;
+      allow write: if request.auth != null &&
+        request.auth.uid == userId &&
+        request.auth.token.email_verified == true &&
+        request.resource.size <= 50 * 1024 * 1024 &&
+        request.resource.contentType.matches('application/pdf|image/.*|text/plain');
+      allow delete: if request.auth != null &&
+        request.auth.uid == userId &&
+        request.auth.token.email_verified == true;
+    }
+  }
+}

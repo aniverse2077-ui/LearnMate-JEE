@@ -56,70 +56,12 @@ import {
   loadCanvasAnnotationsForMaterial,
   saveCanvasAnnotationsForMaterial,
 } from '../services/workspaceService';
-
-function buildCustomParametricSvg(prompt: string, category: string): string {
-  const cleanTitle = prompt.replace(/[<>&"]/g, '').slice(0, 62) || 'JEE Concept Diagram';
-  const lower = `${prompt} ${category}`.toLowerCase();
-
-  if (lower.includes('bridge') || lower.includes('wheatstone') || lower.includes('kirchhoff')) {
-    return `<svg viewBox="0 0 680 380" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
-      <rect width="680" height="380" rx="16" fill="#F8FAFC"/>
-      <text x="24" y="34" font-size="15" font-weight="700" fill="#0F172A">${cleanTitle}</text>
-      <polygon points="340,65 480,185 340,305 200,185" fill="none" stroke="#334155" stroke-width="3"/>
-      <line x1="110" y1="185" x2="200" y2="185" stroke="#334155" stroke-width="3"/>
-      <line x1="480" y1="185" x2="570" y2="185" stroke="#334155" stroke-width="3"/>
-      <line x1="340" y1="65" x2="340" y2="305" stroke="#4F46E5" stroke-width="2.5" stroke-dasharray="6,4"/>
-      <circle cx="340" cy="185" r="22" fill="#EEF2FF" stroke="#4F46E5" stroke-width="2.5"/>
-      <text x="333" y="191" font-size="15" font-weight="800" fill="#4F46E5">G</text>
-      <rect x="235" y="102" width="46" height="22" rx="4" fill="#DBEAFE" stroke="#2563EB" stroke-width="2"/>
-      <text x="247" y="117" font-size="12" font-weight="700" fill="#1D4ED8">R₁</text>
-      <rect x="395" y="102" width="46" height="22" rx="4" fill="#DBEAFE" stroke="#2563EB" stroke-width="2"/>
-      <text x="407" y="117" font-size="12" font-weight="700" fill="#1D4ED8">R₂</text>
-      <rect x="235" y="242" width="46" height="22" rx="4" fill="#D1FAE5" stroke="#059669" stroke-width="2"/>
-      <text x="247" y="257" font-size="12" font-weight="700" fill="#047857">R₃</text>
-      <rect x="395" y="242" width="46" height="22" rx="4" fill="#FEF3C7" stroke="#D97706" stroke-width="2"/>
-      <text x="407" y="257" font-size="12" font-weight="700" fill="#B45309">Rₓ</text>
-      <text x="230" y="352" font-size="13" font-weight="700" fill="#4F46E5">Balanced Condition: R₁ / R₂ = R₃ / Rₓ  (I_G = 0)</text>
-    </svg>`;
-  }
-
-  if (lower.includes('carnot') || lower.includes('thermo') || lower.includes('pv') || lower.includes('adiabatic')) {
-    return `<svg viewBox="0 0 680 380" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
-      <rect width="680" height="380" rx="16" fill="#F8FAFC"/>
-      <text x="24" y="34" font-size="15" font-weight="700" fill="#0F172A">${cleanTitle}</text>
-      <line x1="90" y1="320" x2="600" y2="320" stroke="#334155" stroke-width="2.5"/>
-      <line x1="90" y1="320" x2="90" y2="55" stroke="#334155" stroke-width="2.5"/>
-      <text x="580" y="345" font-size="13" font-weight="700" fill="#334155">Volume (V) →</text>
-      <text x="30" y="70" font-size="13" font-weight="700" fill="#334155">P ↑</text>
-      <path d="M 160 95 Q 270 115 390 135 L 490 255 Q 350 240 240 215 Z" fill="#EEF2FF" stroke="#4F46E5" stroke-width="3"/>
-      <circle cx="160" cy="95" r="5" fill="#DC2626"/>
-      <text x="132" y="88" font-size="12" font-weight="700" fill="#DC2626">A (P₁,V₁,T_H)</text>
-      <circle cx="390" cy="135" r="5" fill="#DC2626"/>
-      <text x="402" y="135" font-size="12" font-weight="700" fill="#DC2626">B (Isothermal Q_in)</text>
-      <circle cx="490" cy="255" r="5" fill="#2563EB"/>
-      <text x="500" y="260" font-size="12" font-weight="700" fill="#2563EB">C (P₃,V₃,T_C)</text>
-      <circle cx="240" cy="215" r="5" fill="#2563EB"/>
-      <text x="155" y="232" font-size="12" font-weight="700" fill="#2563EB">D (Adiabatic)</text>
-      <text x="275" y="190" font-size="13" font-weight="800" fill="#4F46E5">∮ P dV = W_net</text>
-      <text x="210" y="355" font-size="13" font-weight="700" fill="#059669">η = 1 − T_C / T_H  |  PV^γ = const</text>
-    </svg>`;
-  }
-
-  return `<svg viewBox="0 0 680 380" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
-    <rect width="680" height="380" rx="16" fill="#F8FAFC"/>
-    <text x="24" y="34" font-size="15" font-weight="700" fill="#0F172A">${cleanTitle}</text>
-    <line x1="80" y1="310" x2="600" y2="310" stroke="#475569" stroke-width="2.5"/>
-    <line x1="120" y1="335" x2="120" y2="65" stroke="#475569" stroke-width="2.5"/>
-    <path d="M 120 310 Q 290 80 520 310" fill="none" stroke="#4F46E5" stroke-width="3.5"/>
-    <line x1="120" y1="310" x2="260" y2="165" stroke="#DC2626" stroke-width="3"/>
-    <circle cx="260" cy="165" r="5" fill="#DC2626"/>
-    <text x="270" y="162" font-size="13" font-weight="700" fill="#DC2626">v₀ (Initial Vector)</text>
-    <line x1="320" y1="195" x2="320" y2="310" stroke="#059669" stroke-width="2" stroke-dasharray="5,5"/>
-    <text x="330" y="255" font-size="12" font-weight="700" fill="#059669">H_max = u²sin²θ / 2g</text>
-    <text x="155" y="300" font-size="13" font-weight="700" fill="#D97706">θ</text>
-    <text x="240" y="348" font-size="13" font-weight="700" fill="#1E293B">Range R = u²sin(2θ) / g</text>
-  </svg>`;
-}
+import {
+  sanitizeSvgMarkup,
+} from '../utils/svgSanitizer';
+import { synthesizeTopicAccurateSvg } from '../utils/opticsAndGeometrySolver';
+import { CreateStudioPanel, CreateStudioTabId } from './study/CreateStudioPanel';
+import { ResourcesAndGuidePanel } from './study/ResourcesAndGuidePanel';
 
 
 export interface MaterialItem {
@@ -162,6 +104,7 @@ interface TutorChatTurn {
   role: 'user' | 'tutor';
   text: string;
   contextMode: 'strict_material' | 'open_jee';
+  citations?: { pageNumber: number; excerpt: string }[];
   embeddedVisual?: {
     type: '2D Diagram' | '3D Scene' | 'Concept Image' | 'Animated Video';
     preset?: Preset3DId;
@@ -286,14 +229,14 @@ export const HomeDashboardView: React.FC<HomeDashboardProps> = ({
           if (!base64) return;
           setDoubtLoading(true);
           try {
-            const res = await fetch('/api/ai/transcribe', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ audioBase64: base64, mimeType: 'audio/webm' }),
-            });
-            const data = await res.json();
-            if (data.transcript || data.text) {
-              setDoubtInput(data.transcript || data.text);
+            const res = await apiFetchWithAuth<{ transcript?: string; text?: string }>(
+              '/api/ai/transcribe',
+              { audioBase64: base64, mimeType: 'audio/webm' }
+            );
+            if (res.ok && (res.data.transcript || res.data.text)) {
+              setDoubtInput(res.data.transcript || res.data.text || '');
+            } else if (!res.ok) {
+              setDoubtResponse(`[${res.error.errorCode}] ${res.error.message}`);
             }
           } finally {
             setDoubtLoading(false);
@@ -317,18 +260,17 @@ export const HomeDashboardView: React.FC<HomeDashboardProps> = ({
       const reader = new FileReader();
       reader.onloadend = async () => {
         const base64 = String(reader.result || '').split(',')[1] || '';
-        const res = await fetch('/api/ai/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mediaBase64: base64,
-            mimeType: file.type || 'image/jpeg',
-            sourceType: 'photo',
-            prompt: `Solve this JEE problem or handwritten note step-by-step in ${doubtLang} using mathematical notation ($...$ and $$...$$), **bold** key laws, and *italic* exam traps.`,
-          }),
+        const res = await apiFetchWithAuth<{ text?: string }>('/api/ai/analyze', {
+          mediaBase64: base64,
+          mimeType: file.type || 'image/jpeg',
+          sourceType: 'photo',
+          prompt: `Solve this JEE problem or handwritten note step-by-step in ${doubtLang} using mathematical notation ($...$ and $$...$$), **bold** key laws, and *italic* exam traps.`,
         });
-        const data = await res.json();
-        setDoubtResponse(data.text || 'Analyzed photo successfully.');
+        if (!res.ok) {
+          setDoubtResponse(`[${res.error.errorCode}] ${res.error.message}`);
+        } else {
+          setDoubtResponse(res.data.text || 'Analyzed photo successfully.');
+        }
         setDoubtLoading(false);
       };
       reader.readAsDataURL(file);
@@ -1106,6 +1048,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
   const [subTab, setSubTab] = useState<
     'Syllabus' | 'Chapter Notes' | 'My Materials' | 'AI Tutor' | 'Create' | 'Resources'
   >(initialSubTab);
+  const [createTab, setCreateTab] = useState<CreateStudioTabId>('Diagram Maker');
   const [syllabusExam, setSyllabusExam] = useState<'Main' | 'Advanced'>('Main');
   const [notesDensity, setNotesDensity] = useState<'Full' | 'Quick' | 'Original' | 'Split'>('Full');
   const [showAnnotateChoiceModal, setShowAnnotateChoiceModal] = useState(false);
@@ -1170,6 +1113,9 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
   const [tutorContextMode, setTutorContextMode] = useState<'strict_material' | 'open_jee'>(
     'strict_material'
   );
+  const [tutorDifficulty, setTutorDifficulty] = useState<'board' | 'jee_main' | 'jee_advanced'>(
+    'jee_main'
+  );
   const [tutorLang, setTutorLang] = useState<'English' | 'Hinglish'>('English');
   const [tutorQuestion, setTutorQuestion] = useState('');
   const [tutorLoading, setTutorLoading] = useState(false);
@@ -1178,71 +1124,6 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
   const [generatingInlineVisual, setGeneratingInlineVisual] = useState<string | null>(null);
   const [showCreateDropdown, setShowCreateDropdown] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
-
-  // Create Studio state
-  const [createTab, setCreateTab] = useState<
-    'Diagram Maker' | 'Visual' | 'Animated Lesson' | 'Saved Library'
-  >('Diagram Maker');
-  const [selectedMaterialTitle, setSelectedMaterialTitle] = useState('Uploaded Material');
-  const [sourcePageLabel, setSourcePageLabel] = useState('Page 1');
-  const [diagramPrompt, setDiagramPrompt] = useState(
-    'Free-body diagram of a block on an inclined plane, show gravity mg, normal N, and friction f.'
-  );
-  const [diagramCategory, setDiagramCategory] = useState('Auto-detect');
-  const [subjectFilter, setSubjectFilter] = useState<'All' | 'Physics' | 'Chemistry' | 'Maths'>(
-    'All'
-  );
-  const [activePreset, setActivePreset] = useState<Preset3DId>('Incline');
-  const [customSvgHtml, setCustomSvgHtml] = useState<string | null>(null);
-  const [diagramLoading, setDiagramLoading] = useState<boolean>(false);
-  const [renderMode, setRenderMode] = useState<'2D SVG' | '3D Interactive'>('2D SVG');
-  const [animateDiagramMotion, setAnimateDiagramMotion] = useState(false);
-  const [diagramZoom, setDiagramZoom] = useState(100);
-  const [saveBanner, setSaveBanner] = useState<string | null>(null);
-
-  // Interactive Draggable Vectors & Labels on 2D SVG Stage
-  const [diagramVectors, setDiagramVectors] = useState<DiagramVectorOverlayItem[]>([
-    { id: 'vec-1', label: 'N (Normal)', xPct: 44, yPct: 24, dx: -18, dy: -36, color: '#059669' },
-    { id: 'vec-2', label: 'mg (Weight)', xPct: 52, yPct: 68, dx: 0, dy: 42, color: '#DC2626' },
-    { id: 'vec-3', label: 'f_s (Friction)', xPct: 33, yPct: 48, dx: -36, dy: -20, color: '#4F46E5' },
-    { id: 'vec-4', label: 'mg sin θ', xPct: 64, yPct: 50, dx: 36, dy: 20, color: '#D97706' },
-  ]);
-  const [draggingVectorId, setDraggingVectorId] = useState<string | null>(null);
-  const [newVectorLabel, setNewVectorLabel] = useState('');
-  const [newVectorColor, setNewVectorColor] = useState('#4F46E5');
-  const svgStageRef = useRef<HTMLDivElement | null>(null);
-
-  // Visual state
-  const [visualEngine, setVisualEngine] = useState<'pro' | 'nano'>('pro');
-  const [imageSize, setImageSize] = useState<'1K' | '2K' | '4K'>('1K');
-  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
-  const [visualLoading, setVisualLoading] = useState(false);
-  const [visualError, setVisualError] = useState<string | null>(null);
-  const [editBase64, setEditBase64] = useState<string | null>(null);
-
-  // Animated Lesson state
-  const [videoAspectRatio, setVideoAspectRatio] = useState<'16:9' | '9:16'>('16:9');
-  const [videoPhotoBase64, setVideoPhotoBase64] = useState<string | null>(null);
-  const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
-  const [videoLoading, setVideoLoading] = useState(false);
-  const [videoError, setVideoError] = useState<string | null>(null);
-
-  // Resources Hub state
-  const [resourceSubTab, setResourceSubTab] = useState<
-    'Official Portals' | 'Exam Guide' | 'Quick Sheets'
-  >('Official Portals');
-  const [examGuideTab, setExamGuideTab] = useState<
-    'Pattern' | 'Marking' | 'Exam Rules' | 'Schedule'
-  >('Pattern');
-  const [quickSheetSubject, setQuickSheetSubject] = useState<
-    'Physics' | 'Chemistry' | 'Mathematics'
-  >('Physics');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResult, setSearchResult] = useState<{
-    text: string;
-    sources: { title: string; uri: string }[];
-  } | null>(null);
-  const [searchingWeb, setSearchingWeb] = useState(false);
 
   const pagesList: NotePageData[] = activeBundle?.pages || [];
   const currentPageData: NotePageData | null =
@@ -1430,7 +1311,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     onUpdateMaterialPage(selectedMaterial.id, currentPageData.pageNumber, updatedPage);
   };
 
-  const handleTutorExplain = async (style: 'Simpler' | 'Deeper' | 'Custom') => {
+  const handleTutorExplain = async (style: 'Simpler' | 'Deeper' | 'UnitCheck' | 'Custom') => {
     if (!currentPageData && tutorContextMode === 'strict_material' && style !== 'Custom') return;
     setTutorLoading(true);
     const promptText =
@@ -1438,6 +1319,8 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
         ? `Explain Page ${currentPageData?.pageNumber || 1} (${currentPageData?.heading || selectedMaterial?.title || 'this concept'}) in simpler intuitive terms with an everyday analogy and formula.`
         : style === 'Deeper'
         ? `Provide a rigorous JEE Advanced level derivation of ${currentPageData?.heading || selectedMaterial?.title || 'this concept'}, highlighting **fundamental laws** in bold, *exceptions/traps* in italics, and mathematical equations.`
+        : style === 'UnitCheck'
+        ? `Verify dimensional consistency and SI units for the formulas on Page ${currentPageData?.pageNumber || 1} (${currentPageData?.heading || selectedMaterial?.title || 'this topic'}): ${currentPageData?.sections?.flatMap((sec) => sec.formulas || []).join('; ') || selectedMaterial?.contentSummary?.slice(0, 300) || ''}`
         : tutorQuestion.trim();
 
     if (!promptText) {
@@ -1455,18 +1338,22 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     if (style === 'Custom') setTutorQuestion('');
 
     try {
-      const res = await apiFetchWithAuth<{ text: string }>('/api/ai/think', {
+      const res = await apiFetchWithAuth<{
+        text?: string;
+        citations?: { pageNumber: number; excerpt: string }[];
+      }>('/api/ai/tutor', {
         prompt: promptText,
+        materialId: selectedMaterial?.id,
         language: tutorLang,
         contextMode: tutorContextMode,
+        difficulty: tutorDifficulty,
         context: currentPageData
           ? JSON.stringify(currentPageData)
           : selectedMaterial?.contentSummary || '',
       });
-      const replyText =
-        res.ok && res.data.text
-          ? res.data.text
-          : `**Core Concept:** For **${selectedMaterial?.chapter || 'JEE Concept'}**, apply the governing equation $$F = -\\frac{dU}{dx}$$ and verify *boundary conditions* carefully.`;
+      const replyText = res.ok
+        ? res.data.text || 'Tutor did not return an explanation. Please try again.'
+        : `[${res.error.errorCode}] ${res.error.message}`;
 
       setTutorChat((prev) => [
         ...prev,
@@ -1475,6 +1362,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
           role: 'tutor',
           text: replyText,
           contextMode: tutorContextMode,
+          citations: res.ok && Array.isArray(res.data.citations) ? res.data.citations : undefined,
         },
       ]);
     } catch {
@@ -1518,7 +1406,11 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
 
     try {
       if (targetType === '2D Diagram') {
-        const svgHtml = DIAGRAM_SVG_PRESETS[inferredPreset];
+        const solved = synthesizeTopicAccurateSvg({
+          prompt: autoPrompt,
+          preset: inferredPreset,
+        });
+        const svgHtml = solved.svg || DIAGRAM_SVG_PRESETS[inferredPreset];
         setTutorChat((prev) =>
           prev.map((t) =>
             t.id === turn.id
@@ -1564,7 +1456,14 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
           prompt: autoPrompt,
           subject: selectedMaterial?.subject || 'Physics',
           preset: inferredPreset,
-          assetData: DIAGRAM_SVG_PRESETS[inferredPreset],
+          assetData: JSON.stringify({
+            kind: '3d',
+            preset: inferredPreset,
+            angleDeg: 30,
+            paramSecondary: 1.5,
+            cameraPreset: 'iso',
+            previewPngDataUrl: '',
+          }),
           resolutionOrRatio: '3D Interactive',
         });
       } else if (targetType === 'Concept Image') {
@@ -1573,6 +1472,10 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
           imageSize: '1K',
         });
         const imgUrl = res.ok && res.data.imageUrl ? res.data.imageUrl : '';
+        const fallbackSvg = synthesizeTopicAccurateSvg({
+          prompt: autoPrompt,
+          preset: inferredPreset,
+        }).svg;
         setTutorChat((prev) =>
           prev.map((t) =>
             t.id === turn.id
@@ -1582,7 +1485,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                     type: 'Concept Image',
                     preset: inferredPreset,
                     imageUrl: imgUrl,
-                    svgHtml: !imgUrl ? DIAGRAM_SVG_PRESETS[inferredPreset] : undefined,
+                    svgHtml: !imgUrl ? fallbackSvg : undefined,
                     promptUsed: autoPrompt,
                   },
                 }
@@ -1595,7 +1498,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
           prompt: autoPrompt,
           subject: selectedMaterial?.subject || 'Physics',
           preset: inferredPreset,
-          assetData: imgUrl || DIAGRAM_SVG_PRESETS[inferredPreset],
+          assetData: imgUrl || fallbackSvg,
           resolutionOrRatio: '1K',
         });
       } else if (targetType === 'Animated Video') {
@@ -1604,6 +1507,10 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
           aspectRatio: '16:9',
         });
         const vidUrl = res.ok && res.data.videoUrl ? res.data.videoUrl : '';
+        const fallbackSvg = synthesizeTopicAccurateSvg({
+          prompt: autoPrompt,
+          preset: inferredPreset,
+        }).svg;
         setTutorChat((prev) =>
           prev.map((t) =>
             t.id === turn.id
@@ -1613,22 +1520,24 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                     type: 'Animated Video',
                     preset: inferredPreset,
                     videoUrl: vidUrl,
-                    svgHtml: !vidUrl ? DIAGRAM_SVG_PRESETS[inferredPreset] : undefined,
+                    svgHtml: !vidUrl ? fallbackSvg : undefined,
                     promptUsed: autoPrompt,
                   },
                 }
               : t
           )
         );
-        await onSaveCreation({
-          type: 'video',
-          title: `Animated Video · ${selectedMaterial?.chapter || inferredPreset}`,
-          prompt: autoPrompt,
-          subject: selectedMaterial?.subject || 'Physics',
-          preset: inferredPreset,
-          assetData: vidUrl || DIAGRAM_SVG_PRESETS[inferredPreset],
-          resolutionOrRatio: '16:9',
-        });
+        if (vidUrl) {
+          await onSaveCreation({
+            type: 'video',
+            title: `Animated Video · ${selectedMaterial?.chapter || inferredPreset}`,
+            prompt: autoPrompt,
+            subject: selectedMaterial?.subject || 'Physics',
+            preset: inferredPreset,
+            assetData: vidUrl,
+            resolutionOrRatio: '16:9',
+          });
+        }
       }
     } finally {
       setGeneratingInlineVisual(null);
@@ -1658,221 +1567,14 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
     }
   };
 
-  const handleGenerateDiagramSvg = async () => {
-    const lower = diagramPrompt.toLowerCase();
-    let matchedPreset: Preset3DId = 'Incline';
-    if (lower.includes('lens') || lower.includes('optic')) {
-      matchedPreset = 'Convex Lens';
-    } else if (lower.includes('circuit') || lower.includes('rc')) {
-      matchedPreset = 'RC Circuit';
-    } else if (lower.includes('vsepr') || lower.includes('octahedral')) {
-      matchedPreset = 'VSEPR';
-    } else if (lower.includes('parabola')) {
-      matchedPreset = 'Parabola';
-    } else if (lower.includes('ellipse')) {
-      matchedPreset = 'Ellipse';
-    }
-    setActivePreset(matchedPreset);
-
-    // Check if the prompt is one of the default preset descriptions; if custom, synthesize custom SVG
-    const isExactPresetPrompt =
-      lower.includes('free-body diagram of a block on an inclined plane') ||
-      lower.startsWith('jee convex lens diagram') ||
-      lower.startsWith('jee rc circuit diagram') ||
-      lower.startsWith('jee vsepr diagram') ||
-      lower.startsWith('jee parabola diagram') ||
-      lower.startsWith('jee ellipse diagram');
-
-    if (isExactPresetPrompt) {
-      setCustomSvgHtml(null);
-      return;
-    }
-
-    setDiagramLoading(true);
-    try {
-      const res = await apiFetchWithAuth<{ svg?: string }>('/api/ai/search', {
-        prompt: `${diagramPrompt} (${diagramCategory})`,
-        mode: 'svg_diagram',
-        useSearch: false,
-      });
-      if (res.ok && res.data.svg && res.data.svg.includes('<svg')) {
-        setCustomSvgHtml(res.data.svg);
-      } else {
-        setCustomSvgHtml(buildCustomParametricSvg(diagramPrompt, diagramCategory));
-      }
-    } catch {
-      setCustomSvgHtml(buildCustomParametricSvg(diagramPrompt, diagramCategory));
-    } finally {
-      setDiagramLoading(false);
-    }
-  };
-
-  const injectVectorsIntoSvg = (rawSvg: string): string => {
-    if (!rawSvg.includes('</svg>') || diagramVectors.length === 0) return rawSvg;
-    const overlayMarkup = diagramVectors
-      .map((v) => {
-        const x = Math.round((v.xPct / 100) * 680);
-        const y = Math.round((v.yPct / 100) * 380);
-        const x2 = x + v.dx;
-        const y2 = y + v.dy;
-        return `<g>
-          <line x1="${x}" y1="${y}" x2="${x2}" y2="${y2}" stroke="${v.color}" stroke-width="3" />
-          <circle cx="${x2}" cy="${y2}" r="4" fill="${v.color}" />
-          <rect x="${x - 4}" y="${y - 16}" rx="6" width="${Math.max(48, v.label.length * 7 + 12)}" height="22" fill="#FFFFFF" stroke="${v.color}" stroke-width="1.5"/>
-          <text x="${x + 2}" y="${y - 1}" font-size="11" font-weight="700" fill="${v.color}">${v.label}</text>
-        </g>`;
-      })
-      .join('\n');
-    return rawSvg.replace('</svg>', `${overlayMarkup}\n</svg>`);
-  };
-
-  const handleExportSvg = () => {
-    const baseSvg = customSvgHtml || DIAGRAM_SVG_PRESETS[activePreset];
-    const svgContent = injectVectorsIntoSvg(baseSvg);
-    const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `LearnMate_${activePreset.replace(/\s+/g, '_')}.svg`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleSaveDiagramOr3D = async () => {
-    const baseSvg = customSvgHtml || DIAGRAM_SVG_PRESETS[activePreset];
-    const activeSvg = injectVectorsIntoSvg(baseSvg);
-    await onSaveCreation({
-      type: renderMode === '3D Interactive' ? '3d' : 'diagram',
-      title: customSvgHtml
-        ? `${diagramPrompt.slice(0, 36)} (${renderMode})`
-        : `${activePreset} (${renderMode})`,
-      prompt: diagramPrompt,
-      subject: subjectFilter === 'All' ? 'Physics' : subjectFilter,
-      preset: activePreset,
-      assetData: activeSvg,
-      resolutionOrRatio: renderMode,
-    });
-    setSaveBanner(`Saved to Saved Library!`);
-    setTimeout(() => setSaveBanner(null), 3000);
-  };
-
-  const handleGenerateVisual = async () => {
-    setVisualLoading(true);
-    setVisualError(null);
-    try {
-      const endpoint = visualEngine === 'pro' ? '/api/ai/image-pro' : '/api/ai/image-edit';
-      const body =
-        visualEngine === 'pro'
-          ? { prompt: diagramPrompt, imageSize }
-          : { prompt: diagramPrompt, imageBase64: editBase64, mimeType: 'image/png' };
-      const res = await apiFetchWithAuth<{ imageUrl?: string }>(endpoint, body);
-      if (!res.ok || !res.data.imageUrl) {
-        // Fallback to high-resolution SVG data URI so student always gets a crisp visual diagram
-        const fallbackSvg = buildCustomParametricSvg(diagramPrompt, diagramCategory);
-        const svgDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(fallbackSvg)}`;
-        setGeneratedImageUrl(svgDataUrl);
-        await onSaveCreation({
-          type: 'visual',
-          title: `${diagramPrompt.slice(0, 32)} (${imageSize})`,
-          prompt: diagramPrompt,
-          subject: subjectFilter,
-          preset: activePreset,
-          assetData: svgDataUrl,
-          resolutionOrRatio: imageSize,
-        });
-        if (!res.ok) {
-          setVisualError(
-            `Upstream Image API Notice (${res.error.errorCode}): Rendered vector concept diagram instead.`
-          );
-        }
-        return;
-      }
-      setGeneratedImageUrl(res.data.imageUrl);
-      await onSaveCreation({
-        type: 'visual',
-        title: `${activePreset} Visual (${visualEngine === 'pro' ? imageSize : 'Edited'})`,
-        prompt: diagramPrompt,
-        subject: subjectFilter,
-        preset: activePreset,
-        assetData: res.data.imageUrl,
-        resolutionOrRatio: visualEngine === 'pro' ? imageSize : 'Edited',
-      });
-    } catch (err: any) {
-      setVisualError(err?.message || 'Visual generation failed.');
-    } finally {
-      setVisualLoading(false);
-    }
-  };
-
-  const handleGenerateAnimatedVideo = async () => {
-    setVideoLoading(true);
-    setVideoError(null);
-    try {
-      const res = await apiFetchWithAuth<{ videoUrl?: string }>('/api/ai/video', {
-        prompt: `Educational JEE physics/chemistry animated explanation: ${diagramPrompt}`,
-        aspectRatio: videoAspectRatio,
-        base64Image: videoPhotoBase64,
-        mimeType: 'image/png',
-      });
-      if (!res.ok || !res.data.videoUrl) {
-        setVideoError(
-          !res.ok
-            ? `[${res.error.errorCode}] ${res.error.message} — Switched to interactive 3D physics motion preview below.`
-            : 'Switched to interactive 3D physics motion preview.'
-        );
-        setAnimateDiagramMotion(true);
-        await onSaveCreation({
-          type: '3d',
-          title: `${activePreset} Animated 3D Lesson (${videoAspectRatio})`,
-          prompt: diagramPrompt,
-          subject: subjectFilter,
-          preset: activePreset,
-          assetData: DIAGRAM_SVG_PRESETS[activePreset],
-          resolutionOrRatio: videoAspectRatio,
-        });
-        return;
-      }
-      setGeneratedVideoUrl(res.data.videoUrl);
-      await onSaveCreation({
-        type: 'video',
-        title: `${activePreset} Animated Lesson (${videoAspectRatio})`,
-        prompt: diagramPrompt,
-        subject: subjectFilter,
-        preset: activePreset,
-        assetData: res.data.videoUrl,
-        resolutionOrRatio: videoAspectRatio,
-      });
-    } catch (err: any) {
-      setVideoError(err?.message || 'Video generation failed.');
-    } finally {
-      setVideoLoading(false);
-    }
-  };
-
-  const handleGroundedSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-    setSearchingWeb(true);
-    try {
-      const res = await fetch('/api/ai/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: searchQuery }),
-      });
-      const data = await res.json();
-      setSearchResult({
-        text: data.text || 'No grounded results returned.',
-        sources: data.sources || [],
-      });
-    } finally {
-      setSearchingWeb(false);
-    }
-  };
-
   return (
     <div className="min-h-[calc(100vh-64px)] flex flex-col">
-      {/* Secondary Sub-Navigation Bar */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-2 flex flex-wrap items-center gap-3 text-xs">
+      {/* Permanent Horizontal Sub-Navigation Bar (horizontally scrollable <1024px) */}
+      <nav
+        aria-label="Study workspace sections"
+        data-testid="study-subnav"
+        className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 sm:px-6 py-2 flex items-center lg:flex-wrap gap-2.5 text-xs overflow-x-auto whitespace-nowrap"
+      >
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -1955,7 +1657,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
             {tab}
           </button>
         ))}
-      </div>
+      </nav>
 
       {/* 1. 3-in-1 Syllabus Hub */}
       {subTab === 'Syllabus' && (
@@ -3311,6 +3013,30 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                       </div>
                     </div>
 
+                    {/* Difficulty Level Pills */}
+                    <div className="flex flex-wrap items-center gap-1.5 pb-1">
+                      {(
+                        [
+                          { id: 'board', label: 'Board Level' },
+                          { id: 'jee_main', label: 'JEE Main' },
+                          { id: 'jee_advanced', label: 'JEE Advanced' },
+                        ] as const
+                      ).map((lvl) => (
+                        <button
+                          key={lvl.id}
+                          type="button"
+                          onClick={() => setTutorDifficulty(lvl.id)}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer ${
+                            tutorDifficulty === lvl.id
+                              ? 'bg-indigo-600 text-white border-indigo-600'
+                              : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          {lvl.label}
+                        </button>
+                      ))}
+                    </div>
+
                     {/* Default Page Summary Card + Chat Thread */}
                     <div className="space-y-3 max-h-[430px] overflow-y-auto pr-1 flex-1">
                       <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-4 space-y-3 bg-slate-50/40 dark:bg-slate-800/40">
@@ -3356,10 +3082,18 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                           >
                             Explain Deeper
                           </button>
+                          <button
+                            type="button"
+                            disabled={tutorLoading}
+                            onClick={() => handleTutorExplain('UnitCheck')}
+                            className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 cursor-pointer"
+                          >
+                            Unit Check
+                          </button>
                         </div>
                       </div>
 
-                      {/* Chat Messages with One-Click "Create Visual" Button */}
+                      {/* Chat Messages with Citations & One-Click "Create Visual" Button */}
                       {tutorChat.map((turn) => (
                         <div
                           key={turn.id}
@@ -3382,6 +3116,22 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                           </div>
 
                           <MathRichText content={turn.text} className="leading-relaxed" />
+
+                          {turn.citations && turn.citations.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              {turn.citations.map((cit, cIdx) => (
+                                <button
+                                  key={cIdx}
+                                  type="button"
+                                  onClick={() => setPageIdx(Math.max(0, cit.pageNumber - 1))}
+                                  className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold hover:bg-indigo-100 cursor-pointer"
+                                  title={cit.excerpt}
+                                >
+                                  Page {cit.pageNumber}
+                                </button>
+                              ))}
+                            </div>
+                          )}
 
                           {/* One-Click "Create Visual" Button on Every AI Tutor Reply */}
                           {turn.role === 'tutor' && (
@@ -3442,7 +3192,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                                       <div
                                         className="w-full h-48 bg-white rounded-lg p-2 flex items-center justify-center overflow-hidden"
                                         dangerouslySetInnerHTML={{
-                                          __html: turn.embeddedVisual.svgHtml,
+                                          __html: sanitizeSvgMarkup(turn.embeddedVisual.svgHtml),
                                         }}
                                       />
                                     )}
@@ -3467,7 +3217,7 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
                                         <div
                                           className="w-full h-44 flex items-center justify-center"
                                           dangerouslySetInnerHTML={{
-                                            __html: turn.embeddedVisual.svgHtml,
+                                            __html: sanitizeSvgMarkup(turn.embeddedVisual.svgHtml),
                                           }}
                                         />
                                       ) : null}
@@ -3526,1026 +3276,17 @@ export const StudyWorkspaceView: React.FC<StudyViewProps> = ({
       )}
 
       {subTab === 'Create' && (
-        <div className="w-full px-6 lg:px-10 xl:px-12 py-5 space-y-5">
-          <div>
-            <h1 className="font-display font-extrabold text-2xl text-slate-900 dark:text-white">
-              Create Studio
-            </h1>
-          </div>
-
-          <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-1 overflow-x-auto">
-            {(['Diagram Maker', 'Visual', 'Animated Lesson', 'Saved Library'] as const).map(
-              (tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setCreateTab(tab)}
-                  className={`px-4 py-2.5 rounded-t-xl text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
-                    createTab === tab
-                      ? 'bg-[#EEF2FF] text-[#4F46E5] border-[#4F46E5]'
-                      : 'text-slate-600 dark:text-slate-400 border-transparent hover:text-slate-900'
-                  }`}
-                >
-                  {tab} {tab === 'Saved Library' ? `(${creations.length})` : ''}
-                </button>
-              )
-            )}
-          </div>
-
-          {saveBanner && (
-            <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-800">
-              {saveBanner}
-            </div>
-          )}
-
-          {createTab === 'Saved Library' ? (
-            creations.length === 0 ? (
-              <div className="p-10 rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 text-center text-xs text-slate-500">
-                No saved visuals yet. Generate a 2D/3D diagram or click “Create Visual” in AI Tutor to save items here.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {creations.map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3 flex flex-col justify-between shadow-2xs"
-                  >
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="px-2.5 py-0.5 rounded-md bg-[#EEF2FF] text-[#4F46E5] text-[11px] font-bold uppercase">
-                          {item.type}
-                        </span>
-                        <span className="text-xs text-slate-400">{item.resolutionOrRatio}</span>
-                      </div>
-
-                      {/* Live Visual Preview of Saved Creation */}
-                      <div className="h-44 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex items-center justify-center overflow-hidden p-2">
-                        {item.type === 'video' && item.assetData?.startsWith('data:video') ? (
-                          <video
-                            controls
-                            src={item.assetData}
-                            className="max-h-full max-w-full rounded-lg"
-                          />
-                        ) : item.type === 'visual' &&
-                          (item.assetData?.startsWith('data:image') ||
-                            item.assetData?.startsWith('http')) ? (
-                          <img
-                            src={item.assetData}
-                            alt={item.title}
-                            className="max-h-full max-w-full object-contain rounded-lg"
-                          />
-                        ) : item.assetData?.includes('<svg') ? (
-                          <div
-                            className="w-full h-full flex items-center justify-center overflow-hidden"
-                            dangerouslySetInnerHTML={{ __html: item.assetData }}
-                          />
-                        ) : (
-                          <div
-                            className="w-full h-full flex items-center justify-center overflow-hidden"
-                            dangerouslySetInnerHTML={{
-                              __html:
-                                DIAGRAM_SVG_PRESETS[
-                                  (item.preset as Preset3DId) || 'Incline'
-                                ] || DIAGRAM_SVG_PRESETS.Incline,
-                            }}
-                          />
-                        )}
-                      </div>
-
-                      <div>
-                        <h3 className="font-display font-bold text-sm text-slate-900 dark:text-white">
-                          {item.title}
-                        </h3>
-                        <p className="text-xs text-slate-500 line-clamp-2 mt-0.5">{item.prompt}</p>
-                      </div>
-                    </div>
-
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (item.preset) {
-                            setActivePreset(item.preset as Preset3DId);
-                          }
-                          setDiagramPrompt(item.prompt);
-                          if (item.type === '3d') {
-                            setRenderMode('3D Interactive');
-                            setCreateTab('Diagram Maker');
-                          } else if (item.type === 'visual') {
-                            if (item.assetData?.startsWith('data:image')) {
-                              setGeneratedImageUrl(item.assetData);
-                            }
-                            setCreateTab('Visual');
-                          } else if (item.type === 'video') {
-                            if (item.assetData?.startsWith('data:video')) {
-                              setGeneratedVideoUrl(item.assetData);
-                            }
-                            setCreateTab('Animated Lesson');
-                          } else {
-                            if (item.assetData?.includes('<svg')) {
-                              setCustomSvgHtml(item.assetData);
-                            }
-                            setRenderMode('2D SVG');
-                            setCreateTab('Diagram Maker');
-                          }
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-[#EEF2FF] text-[#4F46E5] font-semibold hover:bg-indigo-100 cursor-pointer"
-                      >
-                        Open in Studio
-                      </button>
-
-                      {item.assetData?.includes('<svg') && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const blob = new Blob([item.assetData], {
-                              type: 'image/svg+xml;charset=utf-8',
-                            });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = `${item.title.replace(/\s+/g, '_')}.svg`;
-                            a.click();
-                            URL.revokeObjectURL(url);
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-semibold hover:bg-slate-50 cursor-pointer inline-flex items-center gap-1"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          SVG
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-              {/* Left Prompt & Presets Column (3 Cols) */}
-              <div className="lg:col-span-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xs">
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
-                    Source Material
-                  </label>
-                  <select
-                    value={selectedMaterialTitle}
-                    onChange={(e) => setSelectedMaterialTitle(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium bg-white dark:bg-slate-800"
-                  >
-                    {materials.length === 0 ? (
-                      <option value="Uploaded Material">General JEE Concept</option>
-                    ) : (
-                      materials.map((m) => (
-                        <option key={m.id} value={m.title}>
-                          {m.title}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
-                    Prompt
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={diagramPrompt}
-                    onChange={(e) => setDiagramPrompt(e.target.value)}
-                    placeholder="Describe any JEE diagram, circuit, ray optics setup, or 3D geometry..."
-                    className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs leading-relaxed"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
-                    Category
-                  </label>
-                  <select
-                    value={diagramCategory}
-                    onChange={(e) => setDiagramCategory(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs bg-white dark:bg-slate-800"
-                  >
-                    <option value="Auto-detect">Auto-detect</option>
-                    <option value="Free-Body Diagram">Free-Body Diagram</option>
-                    <option value="Ray Optics">Ray Optics</option>
-                    <option value="Circuit Schematic">Circuit Schematic</option>
-                    <option value="VSEPR 3D Geometry">VSEPR 3D Geometry</option>
-                    <option value="Conic Section">Conic Section</option>
-                  </select>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={diagramLoading || visualLoading || videoLoading}
-                  onClick={() => {
-                    if (createTab === 'Visual') {
-                      handleGenerateVisual();
-                    } else if (createTab === 'Animated Lesson') {
-                      handleGenerateAnimatedVideo();
-                    } else {
-                      handleGenerateDiagramSvg();
-                    }
-                  }}
-                  className="w-full py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] disabled:opacity-60 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>
-                    {diagramLoading || visualLoading || videoLoading
-                      ? 'Generating...'
-                      : 'Generate'}
-                  </span>
-                </button>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
-                    Quick Presets
-                  </label>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {(
-                      [
-                        'Incline',
-                        'Convex Lens',
-                        'RC Circuit',
-                        'VSEPR',
-                        'Parabola',
-                        'Ellipse',
-                      ] as Preset3DId[]
-                    ).map((preset) => (
-                      <button
-                        key={preset}
-                        type="button"
-                        onClick={() => {
-                          setActivePreset(preset);
-                          setCustomSvgHtml(null);
-                          setDiagramPrompt(
-                            preset === 'Incline'
-                              ? 'Free-body diagram of a block on an inclined plane, show gravity mg, normal N, and friction.'
-                              : `JEE ${preset} diagram with labeled vectors and parameters.`
-                          );
-                        }}
-                        className={`px-2 py-2 rounded-xl text-[11px] font-semibold border transition-colors cursor-pointer ${
-                          activePreset === preset && !customSvgHtml
-                            ? 'bg-[#EEF2FF] text-[#4F46E5] border-indigo-300'
-                            : 'border-slate-200 text-slate-700 hover:bg-slate-50'
-                        }`}
-                      >
-                        {preset}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Center Canvas Area (6 Cols) */}
-              <div className="lg:col-span-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-4 shadow-2xs">
-                {createTab === 'Diagram Maker' && (
-                  <>
-                    <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800 text-xs">
-                      <div className="flex items-center gap-2">
-                        <div className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
-                          {(['2D SVG', '3D Interactive'] as const).map((m) => (
-                            <button
-                              key={m}
-                              type="button"
-                              onClick={() => setRenderMode(m)}
-                              className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer ${
-                                renderMode === m
-                                  ? 'bg-white dark:bg-slate-900 text-[#4F46E5] shadow-2xs'
-                                  : 'text-slate-600 dark:text-slate-400'
-                              }`}
-                            >
-                              {m}
-                            </button>
-                          ))}
-                        </div>
-
-                        <div className="inline-flex items-center rounded-lg border border-slate-200 dark:border-slate-700">
-                          <button
-                            type="button"
-                            onClick={() => setDiagramZoom((z) => Math.max(60, z - 20))}
-                            className="px-2.5 py-1 hover:bg-slate-50 cursor-pointer"
-                          >
-                            −
-                          </button>
-                          <span className="px-2.5 py-1 border-x border-slate-200 font-mono tabular-nums">
-                            {diagramZoom}%
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setDiagramZoom((z) => Math.min(150, z + 20))}
-                            className="px-2.5 py-1 hover:bg-slate-50 cursor-pointer"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={handleExportSvg}
-                          className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 font-semibold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5 hover:bg-slate-50 cursor-pointer"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          <span>Export SVG</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleSaveDiagramOr3D}
-                          className="px-3.5 py-1.5 rounded-lg bg-[#4F46E5] text-white font-semibold inline-flex items-center gap-1.5 hover:bg-[#4338CA] cursor-pointer"
-                        >
-                          <Bookmark className="w-3.5 h-3.5" />
-                          <span>Save</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {renderMode === '2D SVG' ? (
-                      <div className="space-y-2.5">
-                        <div
-                          ref={svgStageRef}
-                          onMouseMove={(e) => {
-                            if (!draggingVectorId || !svgStageRef.current) return;
-                            const rect = svgStageRef.current.getBoundingClientRect();
-                            const xPct = Math.max(
-                              6,
-                              Math.min(92, Number((((e.clientX - rect.left) / rect.width) * 100).toFixed(1)))
-                            );
-                            const yPct = Math.max(
-                              8,
-                              Math.min(90, Number((((e.clientY - rect.top) / rect.height) * 100).toFixed(1)))
-                            );
-                            setDiagramVectors((prev) =>
-                              prev.map((v) =>
-                                v.id === draggingVectorId ? { ...v, xPct, yPct } : v
-                              )
-                            );
-                          }}
-                          onMouseUp={() => setDraggingVectorId(null)}
-                          onMouseLeave={() => setDraggingVectorId(null)}
-                          className="w-full h-[420px] rounded-xl border border-slate-100 bg-white flex items-center justify-center overflow-hidden p-4 relative select-none"
-                        >
-                          {diagramLoading && (
-                            <span className="absolute top-3 right-3 px-2.5 py-1 rounded-md bg-indigo-50 text-[#4F46E5] text-[11px] font-bold animate-pulse z-20">
-                              Synthesizing Custom SVG...
-                            </span>
-                          )}
-                          <span className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-slate-900/80 text-white text-[10px] font-bold z-20">
-                            Drag any vector/label below to reposition on diagram
-                          </span>
-                          <div
-                            className={`w-full h-full flex items-center justify-center transition-transform ${
-                              animateDiagramMotion ? 'animate-pulse' : ''
-                            }`}
-                            style={{ transform: `scale(${diagramZoom / 100})` }}
-                            dangerouslySetInnerHTML={{
-                              __html: customSvgHtml || DIAGRAM_SVG_PRESETS[activePreset],
-                            }}
-                          />
-
-                          {/* Interactive Draggable Vector & Label Handles */}
-                          {diagramVectors.map((vec) => (
-                            <div
-                              key={vec.id}
-                              onMouseDown={(e) => {
-                                e.stopPropagation();
-                                setDraggingVectorId(vec.id);
-                              }}
-                              style={{
-                                left: `${vec.xPct}%`,
-                                top: `${vec.yPct}%`,
-                                borderColor: vec.color,
-                                color: vec.color,
-                              }}
-                              className={`absolute -translate-x-1/2 -translate-y-1/2 z-20 px-2.5 py-1 rounded-full bg-white/95 border-2 shadow-md text-[11px] font-extrabold flex items-center gap-1.5 cursor-grab active:cursor-grabbing transition-shadow ${
-                                draggingVectorId === vec.id ? 'ring-4 ring-indigo-500/30 scale-105' : ''
-                              }`}
-                            >
-                              <span
-                                className="w-2 h-2 rounded-full inline-block"
-                                style={{ backgroundColor: vec.color }}
-                              />
-                              <span>↗ {vec.label}</span>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDiagramVectors((prev) =>
-                                    prev.filter((item) => item.id !== vec.id)
-                                  );
-                                }}
-                                className="ml-1 text-slate-400 hover:text-rose-600 text-[10px] cursor-pointer"
-                                title="Remove vector label"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Add Custom Draggable Vector / Label Bar */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs">
-                          <div className="flex items-center gap-2 flex-1 min-w-[220px]">
-                            <input
-                              type="text"
-                              value={newVectorLabel}
-                              onChange={(e) => setNewVectorLabel(e.target.value)}
-                              placeholder="Add draggable vector/label (e.g. T_1, E_net, v_cm)..."
-                              className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-medium"
-                            />
-                            <input
-                              type="color"
-                              value={newVectorColor}
-                              onChange={(e) => setNewVectorColor(e.target.value)}
-                              className="w-7 h-7 rounded cursor-pointer border border-slate-200"
-                              title="Vector Color"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!newVectorLabel.trim()) return;
-                                setDiagramVectors((prev) => [
-                                  ...prev,
-                                  {
-                                    id: `vec-${Date.now()}`,
-                                    label: newVectorLabel.trim(),
-                                    xPct: 50,
-                                    yPct: 50,
-                                    dx: 28,
-                                    dy: -28,
-                                    color: newVectorColor,
-                                  },
-                                ]);
-                                setNewVectorLabel('');
-                              }}
-                              className="px-3 py-1.5 rounded-lg bg-[#4F46E5] hover:bg-[#4338CA] text-white font-bold text-xs cursor-pointer"
-                            >
-                              + Add Vector / Label
-                            </button>
-                          </div>
-                          <span className="text-[11px] text-slate-500 font-semibold">
-                            {diagramVectors.length} Interactive Vectors Active
-                          </span>
-                        </div>
-                      </div>
-                    ) : (
-                      <ThreeSceneCanvas
-                        preset={activePreset}
-                        animateMotion={animateDiagramMotion}
-                      />
-                    )}
-
-                    <div className="flex justify-center pt-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next = !animateDiagramMotion;
-                          setAnimateDiagramMotion(next);
-                          if (next && renderMode === '2D SVG') {
-                            setRenderMode('3D Interactive');
-                          }
-                        }}
-                        className={`px-4 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
-                          animateDiagramMotion
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                            : 'text-[#4F46E5] hover:bg-[#EEF2FF]'
-                        }`}
-                      >
-                        <Play className="w-3.5 h-3.5" />
-                        <span>
-                          {animateDiagramMotion ? 'Stop 3D Motion' : 'Animate 3D Motion'}
-                        </span>
-                      </button>
-                    </div>
-                  </>
-                )}
-
-                {createTab === 'Visual' && (
-                  <div className="space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100 text-xs">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setVisualEngine('pro')}
-                          className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${
-                            visualEngine === 'pro'
-                              ? 'bg-[#EEF2FF] text-[#4F46E5]'
-                              : 'text-slate-600'
-                          }`}
-                        >
-                          Pro Image (1K / 2K / 4K)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setVisualEngine('nano')}
-                          className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${
-                            visualEngine === 'nano'
-                              ? 'bg-[#EEF2FF] text-[#4F46E5]'
-                              : 'text-slate-600'
-                          }`}
-                        >
-                          Image Edit
-                        </button>
-                      </div>
-
-                      {visualEngine === 'pro' && (
-                        <div className="flex items-center gap-1">
-                          {(['1K', '2K', '4K'] as const).map((sz) => (
-                            <button
-                              key={sz}
-                              type="button"
-                              onClick={() => setImageSize(sz)}
-                              className={`px-2.5 py-1 rounded-md font-bold cursor-pointer ${
-                                imageSize === sz
-                                  ? 'bg-[#4F46E5] text-white'
-                                  : 'bg-slate-100 text-slate-600'
-                              }`}
-                            >
-                              {sz}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {visualEngine === 'nano' && (
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-                        <span>Reference image to edit (optional):</span>
-                        <label className="px-3 py-1 rounded-lg bg-white border border-slate-200 font-semibold cursor-pointer">
-                          Upload Image
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) => {
-                              const f = e.target.files?.[0];
-                              if (!f) return;
-                              const r = new FileReader();
-                              r.onloadend = () =>
-                                setEditBase64(String(r.result || '').split(',')[1] || null);
-                              r.readAsDataURL(f);
-                            }}
-                            className="hidden"
-                          />
-                        </label>
-                      </div>
-                    )}
-
-                    <div className="h-[360px] rounded-xl border border-slate-100 bg-slate-50 flex flex-col items-center justify-center p-4 overflow-hidden">
-                      {visualLoading ? (
-                        <p className="text-xs font-semibold text-[#4F46E5] animate-pulse">
-                          Generating {imageSize} Visual...
-                        </p>
-                      ) : generatedImageUrl ? (
-                        <img
-                          src={generatedImageUrl}
-                          alt="Generated JEE Visual"
-                          className="max-h-full max-w-full object-contain rounded-lg"
-                        />
-                      ) : (
-                        <div className="text-center space-y-2 max-w-sm">
-                          <ImageIcon className="w-8 h-8 text-[#4F46E5] mx-auto" />
-                          <p className="text-xs text-slate-600">
-                            Click <strong>Generate</strong> on the left panel to create a {imageSize} concept diagram.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                    {visualError && (
-                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
-                        {visualError}
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {createTab === 'Animated Lesson' && (
-                  <div className="space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100 text-xs">
-                      <span className="font-bold text-slate-800">
-                        Animated Concept Video
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        {(['16:9', '9:16'] as const).map((ratio) => (
-                          <button
-                            key={ratio}
-                            type="button"
-                            onClick={() => setVideoAspectRatio(ratio)}
-                            className={`px-3 py-1 rounded-lg font-semibold cursor-pointer ${
-                              videoAspectRatio === ratio
-                                ? 'bg-[#4F46E5] text-white'
-                                : 'bg-slate-100 text-slate-600'
-                            }`}
-                          >
-                            {ratio === '16:9' ? '16:9 Landscape' : '9:16 Portrait'}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-                      <span>Animate a static diagram photo (optional):</span>
-                      <label className="px-3 py-1 rounded-lg bg-white border border-slate-200 font-semibold cursor-pointer">
-                        Upload Photo
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (!f) return;
-                            const r = new FileReader();
-                            r.onloadend = () =>
-                              setVideoPhotoBase64(String(r.result || '').split(',')[1] || null);
-                            r.readAsDataURL(f);
-                          }}
-                          className="hidden"
-                        />
-                      </label>
-                    </div>
-
-                    <div className="h-[340px] rounded-xl border border-slate-100 bg-slate-50 flex items-center justify-center p-4 overflow-hidden">
-                      {videoLoading ? (
-                        <p className="text-xs font-semibold text-[#4F46E5] animate-pulse">
-                          Generating {videoAspectRatio} Animated Lesson...
-                        </p>
-                      ) : generatedVideoUrl ? (
-                        <video
-                          controls
-                          src={generatedVideoUrl}
-                          className="max-h-full max-w-full rounded-lg"
-                        />
-                      ) : animateDiagramMotion ? (
-                        <div className="w-full h-full">
-                          <ThreeSceneCanvas preset={activePreset} animateMotion={true} />
-                        </div>
-                      ) : (
-                        <div className="text-center space-y-2 max-w-sm">
-                          <Video className="w-8 h-8 text-[#4F46E5] mx-auto" />
-                          <p className="text-xs text-slate-600">
-                            Click <strong>Generate</strong> on the left panel to render an animated lesson.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                    {videoError && (
-                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
-                        {videoError}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Right Cited Source Column (3 Cols) */}
-              <div className="lg:col-span-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xs">
-                <h2 className="font-display font-bold text-base text-slate-900 dark:text-white">
-                  Cited Source
-                </h2>
-                <div className="rounded-xl border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                  <div className="p-3 flex items-center gap-2.5 font-medium text-slate-800 dark:text-slate-200">
-                    <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-                    <span>{selectedMaterial?.title || selectedMaterialTitle}</span>
-                  </div>
-                  <div className="p-3 flex items-center gap-2.5 font-medium text-slate-800 dark:text-slate-200">
-                    <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-                    <span>{sourcePageLabel}</span>
-                  </div>
-                  <div className="p-3 flex items-center gap-2.5 font-medium text-slate-800 dark:text-slate-200">
-                    <Layers className="w-4 h-4 text-slate-400 shrink-0" />
-                    <span>Preset: {activePreset}</span>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setCreateTab('Animated Lesson')}
-                  className="w-full py-2.5 px-4 rounded-xl border border-indigo-300 text-[#4F46E5] font-semibold text-xs flex items-center justify-center gap-2 hover:bg-[#EEF2FF] transition-colors cursor-pointer"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  <span>Open Animated Lesson</span>
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+        <CreateStudioPanel
+          materials={materials}
+          selectedMaterial={selectedMaterial ?? null}
+          creations={creations}
+          onSaveCreation={onSaveCreation}
+          requestedCreateTab={createTab}
+        />
       )}
 
       {subTab === 'Resources' && (
-        <div className="w-full px-6 lg:px-10 xl:px-12 py-5 space-y-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <div className="text-[11px] font-bold tracking-wider uppercase text-[#4F46E5]">
-                STUDY / RESOURCES
-              </div>
-              <h1 className="font-display font-extrabold text-2xl sm:text-3xl text-slate-900 dark:text-white">
-                Resources
-              </h1>
-            </div>
-
-            <form
-              onSubmit={handleGroundedSearch}
-              className="flex items-center gap-2 w-full sm:w-auto"
-            >
-              <div className="relative flex-1 sm:w-80">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search live NTA JEE notices & cutoffs..."
-                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={searchingWeb}
-                className="px-4 py-2 rounded-xl bg-[#4F46E5] text-white text-xs font-semibold cursor-pointer"
-              >
-                {searchingWeb ? 'Searching...' : 'Search NTA'}
-              </button>
-            </form>
-          </div>
-
-          {searchResult && (
-            <div className="p-4 rounded-2xl bg-[#EEF2FF]/70 border border-indigo-200 space-y-2 text-xs">
-              <div className="font-bold text-[#4F46E5]">
-                Live Google Search Grounding Result (Gemini 3.8 Flash):
-              </div>
-              <div className="text-slate-800 leading-relaxed">
-                <MathRichText content={searchResult.text} />
-              </div>
-              {searchResult.sources.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {searchResult.sources.map((src, i) => (
-                    <a
-                      key={i}
-                      href={src.uri}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-2.5 py-1 rounded-md bg-white border border-indigo-200 text-[#4F46E5] font-medium inline-flex items-center gap-1 hover:underline"
-                    >
-                      <span>{src.title}</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-1">
-            {(['Official Portals', 'Exam Guide', 'Quick Sheets'] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setResourceSubTab(t)}
-                className={`px-4 py-2 rounded-t-xl text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
-                  resourceSubTab === t
-                    ? 'bg-[#EEF2FF] text-[#4F46E5] border-[#4F46E5]'
-                    : 'text-slate-600 border-transparent hover:text-slate-900'
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            <div className="lg:col-span-6 space-y-4">
-              <h2 className="font-display font-bold text-base text-slate-900 dark:text-white">
-                Official Study Portals (4)
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {[
-                  {
-                    title: 'SATHEE (IIT Kanpur)',
-                    badge: 'Free Portal',
-                    desc: 'Free JEE video lectures, practice tests & mentorship by Ministry of Education.',
-                    domain: 'sathee.prutor.ai',
-                    url: 'https://sathee.prutor.ai',
-                  },
-                  {
-                    title: 'National Test Abhyas',
-                    badge: 'NTA Mock App',
-                    desc: 'Official NTA mock test practice platform for JEE Main & NEET.',
-                    domain: 'nta.ac.in',
-                    url: 'https://www.nta.ac.in',
-                  },
-                  {
-                    title: 'JEE Main Official Portal',
-                    badge: 'Exam Bulletin',
-                    desc: 'Information bulletin, syllabus PDF, public notices & exam schedule.',
-                    domain: 'jeemain.nta.nic.in',
-                    url: 'https://jeemain.nta.nic.in',
-                  },
-                  {
-                    title: 'NCERT e-Textbooks',
-                    badge: 'Textbooks',
-                    desc: 'Official Class 11 & 12 Physics, Chemistry and Mathematics NCERT books.',
-                    domain: 'ncert.nic.in',
-                    url: 'https://ncert.nic.in/textbook.php',
-                  },
-                ].map((portal) => (
-                  <div
-                    key={portal.title}
-                    className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 flex flex-col justify-between space-y-4 shadow-2xs"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <h3 className="font-display font-bold text-sm text-slate-900 dark:text-white">
-                          {portal.title}
-                        </h3>
-                        <span className="px-2 py-0.5 rounded-md bg-[#EEF2FF] text-[#4F46E5] text-[10px] font-bold whitespace-nowrap">
-                          {portal.badge}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                        {portal.desc}
-                      </p>
-                    </div>
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <span className="text-[11px] text-slate-400">{portal.domain}</span>
-                      <a
-                        href={portal.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-3.5 py-1.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"
-                      >
-                        <span>Open</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="lg:col-span-6 space-y-5">
-              <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xs">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="font-display font-bold text-base text-slate-900 dark:text-white">
-                    Exam Guide
-                  </h2>
-                  <div className="flex items-center gap-1 text-xs">
-                    {(['Pattern', 'Marking', 'Exam Rules', 'Schedule'] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        type="button"
-                        onClick={() => setExamGuideTab(tab)}
-                        className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
-                          examGuideTab === tab
-                            ? 'bg-[#EEF2FF] text-[#4F46E5]'
-                            : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        {tab}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {examGuideTab === 'Pattern' && (
-                  <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                    {[
-                      { k: 'Mode', v: 'Computer Based Test (CBT)' },
-                      { k: 'Duration', v: '3 hours (180 minutes)' },
-                      { k: 'Subjects', v: 'Physics, Chemistry, Mathematics' },
-                      {
-                        k: 'Total Questions',
-                        v: '75 questions (25 per subject: 20 MCQ + 5 Compulsory Numerical)',
-                      },
-                      { k: 'Total Marks', v: '300 marks' },
-                    ].map((row) => (
-                      <div key={row.k} className="py-2.5 flex items-center justify-between">
-                        <span className="text-slate-500">{row.k}</span>
-                        <span className="font-bold text-slate-900 dark:text-white">{row.v}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {examGuideTab === 'Marking' && (
-                  <div className="divide-y divide-slate-100 text-xs">
-                    <div className="py-2.5 flex justify-between">
-                      <span className="text-slate-500">Section A (20 MCQs per subject)</span>
-                      <span className="font-bold text-emerald-600">+4 Correct / −1 Wrong</span>
-                    </div>
-                    <div className="py-2.5 flex justify-between">
-                      <span className="text-slate-500">
-                        Section B (5 Compulsory Numericals per subject)
-                      </span>
-                      <span className="font-bold text-indigo-600">
-                        +4 Correct / 0 Negative (2025/2026 NTA Rule)
-                      </span>
-                    </div>
-                    <div className="py-2.5 flex justify-between">
-                      <span className="text-slate-500">JEE Advanced Multi-Choice</span>
-                      <span className="font-bold text-amber-700">
-                        +4 All / +1 Partial per Option / −2 Wrong
-                      </span>
-                    </div>
-                  </div>
-                )}
-                {examGuideTab === 'Exam Rules' && (
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Candidates must bring their NTA Admit Card, valid photo ID, and transparent
-                    ballpoint pen. Electronic devices, calculators, and log tables are strictly
-                    prohibited inside the CBT examination hall.
-                  </p>
-                )}
-                {examGuideTab === 'Schedule' && (
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Session 1: January 2027 (Morning Shift 09:00–12:00 IST, Afternoon Shift
-                    15:00–18:00 IST). Session 2: April 2027.
-                  </p>
-                )}
-              </div>
-
-              <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xs">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-display font-bold text-base text-slate-900 dark:text-white">
-                    Quick Formula Sheets
-                  </h2>
-                  <div className="flex items-center gap-1 text-xs">
-                    {(['Physics', 'Chemistry', 'Mathematics'] as const).map((subj) => (
-                      <button
-                        key={subj}
-                        type="button"
-                        onClick={() => setQuickSheetSubject(subj)}
-                        className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer ${
-                          quickSheetSubject === subj
-                            ? 'bg-[#EEF2FF] text-[#4F46E5]'
-                            : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        {subj}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    {
-                      title: 'Mechanics – Laws of Motion',
-                      formulas: [
-                        '$\\vec{F} = \\frac{d\\vec{p}}{dt} = m\\vec{a}$',
-                        '$f_s \\le \\mu_s N, \\quad f_k = \\mu_k N$',
-                        '$W = \\int \\vec{F}\\cdot d\\vec{r} = \\Delta K$',
-                      ],
-                    },
-                    {
-                      title: 'Electrostatics & Current',
-                      formulas: [
-                        '$F = \\frac{1}{4\\pi\\varepsilon_0}\\frac{q_1 q_2}{r^2}$',
-                        '$E = -\\frac{dV}{dr}, \\quad C = \\frac{Q}{V}$',
-                        '$V = IR, \\quad P = I^2 R$',
-                      ],
-                    },
-                    {
-                      title: 'Optics & Modern Physics',
-                      formulas: [
-                        '$\\frac{1}{v} - \\frac{1}{u} = \\frac{1}{f}$',
-                        '$E = hf = \\frac{hc}{\\lambda}$',
-                        '$N(t) = N_0 e^{-\\lambda t}$',
-                      ],
-                    },
-                  ].map((sheet) => (
-                    <div
-                      key={sheet.title}
-                      className="rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 flex flex-col justify-between space-y-3"
-                    >
-                      <div className="space-y-2">
-                        <h3 className="font-display font-bold text-xs text-slate-900 dark:text-white">
-                          {sheet.title}
-                        </h3>
-                        <div className="space-y-1.5 text-[11px] text-slate-700 dark:text-slate-200">
-                          {sheet.formulas.map((f, i) => (
-                            <div key={i}>
-                              <MathRichText content={f} />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onAddQuickSheetMaterial(
-                            sheet.title,
-                            quickSheetSubject,
-                            `**${sheet.title}**: ${sheet.formulas.join(' | ')}`
-                          )
-                        }
-                        className="w-full py-1.5 rounded-lg bg-[#EEF2FF] text-[#4F46E5] font-semibold text-[11px] hover:bg-indigo-100 transition-colors cursor-pointer"
-                      >
-                        + Add to My Materials
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ResourcesAndGuidePanel onAddQuickSheetMaterial={onAddQuickSheetMaterial} />
       )}
     </div>
   );

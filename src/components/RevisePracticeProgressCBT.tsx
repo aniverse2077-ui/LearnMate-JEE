@@ -30,7 +30,6 @@ import {
   ErrorRootCauseTag,
   SM2FlashcardItem,
   ExamTrack,
-  calculateCBTMockSummary,
   formatCountdownTimer,
   calculateNextSRSReview,
 } from '../utils/jeeEngine';
@@ -39,6 +38,10 @@ import {
   loadCbtInProgressDraft,
   clearCbtInProgressDraft,
   syncRevisionStateToFirestore,
+  getUserScopedStorageKey,
+  reportQuestionIssueOnServer,
+  verifySinglePyqAnswerOnServer,
+  gradeCbtAttemptOnServerApi,
   CbtInProgressDraft,
 } from '../services/workspaceService';
 import { MathRichText } from './MathRichText';
@@ -52,6 +55,11 @@ export interface MistakeNotebookEntry {
   loggedAt: string;
   source: 'CBT Mock' | 'PYQ Bank' | 'Adaptive Drill';
   rootCauseTag?: ErrorRootCauseTag;
+  recheckCount?: number;
+  recheckPassed?: boolean;
+  masteryDelta?: number;
+  nextDueIso?: string;
+  intervalDays?: number;
 }
 
 type HandwritingFontId = 'caveat' | 'kalam' | 'patrick' | 'indie';
@@ -95,6 +103,7 @@ interface ReviseViewProps {
   onUpdateSM2Card?: (card: SM2FlashcardItem) => void;
   onAddSM2Card?: (card: Omit<SM2FlashcardItem, 'id'>) => void;
   onTagMistakeRootCause?: (id: string, cause: ErrorRootCauseTag) => void;
+  onVerifyMistakeRecheck?: (mistakeId: string, passed: boolean) => void;
   onSelectMaterial: (mat: MaterialItem) => void;
   onOpenAddMaterial: (tab: 'pdf' | 'photo' | 'youtube' | 'text' | 'drive') => void;
   onAddFlashcard: (node: MindMapNodeItem) => void;
@@ -111,6 +120,7 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
   onUpdateSM2Card,
   onAddSM2Card,
   onTagMistakeRootCause,
+  onVerifyMistakeRecheck,
   onSelectMaterial,
   onOpenAddMaterial,
   onAddFlashcard,
@@ -161,7 +171,7 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
   // Dynamic Formula Book state (All Uploaded Materials + Custom Student Formulas)
   const [customFormulas, setCustomFormulas] = useState<FormulaCardEntry[]>(() => {
     try {
-      const raw = localStorage.getItem('learnmate_custom_formulas');
+      const raw = localStorage.getItem(getUserScopedStorageKey('custom_formulas'));
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
@@ -240,7 +250,7 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
     const next = [entry, ...customFormulas];
     setCustomFormulas(next);
     try {
-      localStorage.setItem('learnmate_custom_formulas', JSON.stringify(next));
+      localStorage.setItem(getUserScopedStorageKey('custom_formulas'), JSON.stringify(next));
     } catch {
       // ignore storage quota
     }
@@ -1409,6 +1419,7 @@ export const ReviseWorkspaceView: React.FC<ReviseViewProps> = ({
           onTagMistakeRootCause={(id, cause) => {
             if (onTagMistakeRootCause) onTagMistakeRootCause(id, cause);
           }}
+          onVerifyMistakeRecheck={onVerifyMistakeRecheck}
           onPracticeMistake={onPracticeQuestion}
           showToast={showToast}
         />
@@ -1458,6 +1469,16 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
   >('All');
   const [selectedPyqOptions, setSelectedPyqOptions] = useState<Record<string, number>>({});
   const [revealedPyqSolutions, setRevealedPyqSolutions] = useState<Record<string, boolean>>({});
+  const [verifiedPyqSolutions, setVerifiedPyqSolutions] = useState<
+    Record<
+      string,
+      { isCorrect: boolean; correctIndex: number; explanation: string; keyVersion?: string }
+    >
+  >({});
+  const [verifyingPyqId, setVerifyingPyqId] = useState<string | null>(null);
+  const [reportingQId, setReportingQId] = useState<string | null>(null);
+  const [reportText, setReportText] = useState('');
+  const [reportFeedback, setReportFeedback] = useState<Record<string, string>>({});
 
   // Custom Test Builder State
   const [customSubjects, setCustomSubjects] = useState<
@@ -1786,15 +1807,17 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
           <div className="space-y-4">
             {filteredPyqs.slice(0, 15).map((q, idx) => {
               const chosen = selectedPyqOptions[q.id];
-              const isRevealed = !!revealedPyqSolutions[q.id];
-              const isCorrect = chosen === q.correctIndex;
+              const verified = verifiedPyqSolutions[q.id];
+              const isRevealed = Boolean(revealedPyqSolutions[q.id] && verified);
+              const isCorrect = verified ? verified.isCorrect : false;
+              const resolvedCorrectIndex = verified ? verified.correctIndex : -1;
               return (
                 <div
                   key={q.id}
                   className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-2xs space-y-4"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="px-2.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-xs font-extrabold">
                         PYQ #{idx + 1} • {q.subject} ({q.chapter})
                       </span>
@@ -1809,11 +1832,70 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
                       >
                         {q.difficultyBucket || 'Must-Do'} Bucket
                       </span>
+                      <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-mono font-bold">
+                        {q.provenanceType || 'RECONSTRUCTED_WITH_SOURCE'}
+                      </span>
                     </div>
-                    <span className="text-xs font-bold text-slate-500">
-                      {q.section === 'Section B' ? '+4 / 0 (Numerical)' : '+4 / -1'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-500">
+                        {q.section === 'Section B'
+                          ? q.examType === 'JEE Advanced'
+                            ? '+4 / 0 (Numerical)'
+                            : '+4 / -1 (Numerical)'
+                          : '+4 / -1'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReportingQId((cur) => (cur === q.id ? null : q.id));
+                          setReportText('');
+                        }}
+                        className="text-[10px] font-bold text-slate-500 hover:text-indigo-600 underline cursor-pointer"
+                      >
+                        Report Issue
+                      </button>
+                    </div>
                   </div>
+
+                  {reportingQId === q.id && (
+                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex flex-wrap items-center gap-2 text-xs">
+                      <input
+                        type="text"
+                        value={reportText}
+                        onChange={(e) => setReportText(e.target.value)}
+                        placeholder="Describe answer key discrepancy, LaTeX typo, or provenance issue..."
+                        className="flex-1 min-w-[200px] px-3 py-1.5 rounded-lg border border-slate-300 bg-white dark:bg-slate-900"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!reportText.trim()) return;
+                          const r = await reportQuestionIssueOnServer({
+                            questionId: q.id,
+                            issueType: 'wrong_answer_key',
+                            details: reportText.trim(),
+                          });
+                          setReportFeedback((prev) => ({
+                            ...prev,
+                            [q.id]: r.ok
+                              ? 'Reported to editorial review queue.'
+                              : `[${r.error.errorCode}] ${r.error.message}`,
+                          }));
+                          setReportingQId(null);
+                          setReportText('');
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-bold cursor-pointer"
+                      >
+                        Submit
+                      </button>
+                    </div>
+                  )}
+
+                  {reportFeedback[q.id] && (
+                    <div className="text-[11px] font-semibold text-indigo-700">
+                      {reportFeedback[q.id]}
+                    </div>
+                  )}
 
                   <div className="text-sm sm:text-base font-bold text-slate-900 dark:text-white leading-relaxed">
                     <MathRichText content={q.stem} />
@@ -1826,7 +1908,7 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
                         let cls =
                           'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800';
                         if (isRevealed) {
-                          if (optIdx === q.correctIndex) {
+                          if (optIdx === resolvedCorrectIndex) {
                             cls = 'border-emerald-500 bg-emerald-50/80 text-emerald-950';
                           } else if (selected) {
                             cls = 'border-rose-400 bg-rose-50/80 text-rose-950';
@@ -1838,11 +1920,37 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
                           <button
                             key={optIdx}
                             type="button"
-                            onClick={() => {
+                            disabled={verifyingPyqId === q.id}
+                            onClick={async () => {
                               setSelectedPyqOptions((prev) => ({ ...prev, [q.id]: optIdx }));
-                              setRevealedPyqSolutions((prev) => ({ ...prev, [q.id]: true }));
-                              if (optIdx !== q.correctIndex && onRecordMistake) {
-                                onRecordMistake(q, opt);
+                              setVerifyingPyqId(q.id);
+                              try {
+                                const srv = await verifySinglePyqAnswerOnServer({
+                                  questionId: q.id,
+                                  selectedOption: optIdx,
+                                });
+                                if (srv.ok) {
+                                  setVerifiedPyqSolutions((prev) => ({
+                                    ...prev,
+                                    [q.id]: {
+                                      isCorrect: srv.data.isCorrect,
+                                      correctIndex: srv.data.correctIndex,
+                                      explanation: srv.data.explanation,
+                                      keyVersion: srv.data.keyVersion,
+                                    },
+                                  }));
+                                  setRevealedPyqSolutions((prev) => ({ ...prev, [q.id]: true }));
+                                  if (!srv.data.isCorrect && onRecordMistake) {
+                                    onRecordMistake(q, opt);
+                                  }
+                                } else {
+                                  setReportFeedback((prev) => ({
+                                    ...prev,
+                                    [q.id]: srv.error.message || 'Server answer verification failed.',
+                                  }));
+                                }
+                              } finally {
+                                setVerifyingPyqId(null);
                               }
                             }}
                             className={`p-3 rounded-xl border text-left text-xs sm:text-sm font-medium flex items-center justify-between cursor-pointer ${cls}`}
@@ -1851,7 +1959,7 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
                               <strong>({String.fromCharCode(65 + optIdx)})</strong>
                               <MathRichText content={opt} inline />
                             </span>
-                            {isRevealed && optIdx === q.correctIndex && (
+                            {isRevealed && optIdx === resolvedCorrectIndex && (
                               <span className="text-[11px] font-extrabold text-emerald-700">
                                 ✓ Correct
                               </span>
@@ -1862,7 +1970,13 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
                     </div>
                   )}
 
-                  {isRevealed && (
+                  {verifyingPyqId === q.id && (
+                    <div className="text-xs font-bold text-indigo-600">
+                      Verifying answer against server key...
+                    </div>
+                  )}
+
+                  {isRevealed && verified && (
                     <div
                       className={`p-4 rounded-xl border text-xs space-y-1.5 ${
                         isCorrect
@@ -1870,12 +1984,19 @@ export const PracticeDashboardView: React.FC<PracticeViewProps> = ({
                           : 'bg-amber-50/70 border-amber-200 text-amber-950'
                       }`}
                     >
-                      <div className="font-extrabold">
-                        {isCorrect
-                          ? 'Correct! Verified Step-by-Step Derivation:'
-                          : 'Added to My Mistakes Notebook — Verified Step-by-Step Solution:'}
+                      <div className="flex flex-wrap items-center justify-between gap-2 font-extrabold">
+                        <span>
+                          {isCorrect
+                            ? 'Correct! Server-Verified Step-by-Step Derivation:'
+                            : 'Added to My Mistakes Notebook — Server-Verified Derivation:'}
+                        </span>
+                        {verified.keyVersion && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/80 text-slate-600">
+                            {verified.keyVersion}
+                          </span>
+                        )}
                       </div>
-                      <MathRichText content={q.explanation} />
+                      <MathRichText content={verified.explanation || q.explanation} />
                     </div>
                   )}
                 </div>
@@ -2162,7 +2283,12 @@ interface CBTMockExamProps {
   customQuestions?: CBTQuestion[];
   customDurationMinutes?: number;
   customPaperTitle?: string;
-  onSubmitMock: (summary: CBTMockSummary, focusEvents: number) => void;
+  onSubmitMock: (
+    summary: CBTMockSummary,
+    focusEvents: number,
+    questions?: CBTQuestion[],
+    responses?: Record<string, CBTQuestionResponse>
+  ) => void;
   onExitMock: () => void;
   onRecordMistake?: (question: CBTQuestion, userAnswer: string) => void;
 }
@@ -2221,6 +2347,19 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
   const [examLanguage, setExamLanguage] = useState<'English' | 'Hindi'>('English');
   const [showInstructionsModal, setShowInstructionsModal] = useState<boolean>(false);
   const [submittedSummary, setSubmittedSummary] = useState<CBTMockSummary | null>(null);
+  const [submittingCbt, setSubmittingCbt] = useState<boolean>(false);
+  const [submitCbtError, setSubmitCbtError] = useState<string | null>(null);
+  const [serverSolutions, setServerSolutions] = useState<
+    Record<
+      string,
+      {
+        correctIndex: number;
+        correctIndices?: number[];
+        numericalAnswer?: number;
+        explanation: string;
+      }
+    >
+  >({});
 
   const buildInitialResponses = (list: CBTQuestion[]) => {
     const init: Record<string, CBTQuestionResponse> = {};
@@ -2528,23 +2667,74 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
     }));
   };
 
-  const handleTriggerSubmit = () => {
-    void clearCbtInProgressDraft();
-    const summary = calculateCBTMockSummary(questionsList, responses);
-    setSubmittedSummary(summary);
-    if (onRecordMistake && summary.questionDetails) {
-      summary.questionDetails.forEach((detail: QuestionAttemptDetail) => {
-        if (detail.isAttempted && !detail.isCorrect) {
-          const qObj = questionsList.find((q) => q.id === detail.questionId);
-          if (qObj) {
-            onRecordMistake(qObj, detail.userAnswerLabel || 'Incorrect CBT Response');
-          }
-        }
+  const handleTriggerSubmit = async () => {
+    setSubmittingCbt(true);
+    setSubmitCbtError(null);
+    try {
+      const graded = await gradeCbtAttemptOnServerApi({
+        attemptType: customQuestions && customQuestions.length > 0 ? 'custom_drill' : 'official_mock',
+        questionIds:
+          !customQuestions || customQuestions.length === 0
+            ? questionsList.map((q) => q.id)
+            : undefined,
+        questions:
+          customQuestions && customQuestions.length > 0 ? questionsList : undefined,
+        responses,
+        examMode,
       });
+
+      if (!graded.ok) {
+        setSubmitCbtError(
+          graded.error.message || 'Server CBT grading unavailable. Your draft remains saved; please retry.'
+        );
+        return;
+      }
+
+      void clearCbtInProgressDraft();
+      const summary = graded.data.summary as CBTMockSummary;
+      setServerSolutions(graded.data.questionSolutions || {});
+      setSubmittedSummary(summary);
+      if (onRecordMistake && summary.questionDetails) {
+        summary.questionDetails.forEach((detail: QuestionAttemptDetail) => {
+          if (detail.isAttempted && !detail.isCorrect) {
+            const qObj = questionsList.find((q) => q.id === detail.questionId);
+            if (qObj) {
+              const sol = graded.data.questionSolutions?.[qObj.id];
+              onRecordMistake(
+                sol
+                  ? {
+                      ...qObj,
+                      correctIndex: sol.correctIndex,
+                      correctIndices: sol.correctIndices,
+                      numericalAnswer: sol.numericalAnswer,
+                      explanation: sol.explanation,
+                    }
+                  : qObj,
+                detail.userAnswerLabel || 'Incorrect CBT Response'
+              );
+            }
+          }
+        });
+      }
+    } finally {
+      setSubmittingCbt(false);
     }
   };
 
-  const summaryLive = calculateCBTMockSummary(questionsList, responses);
+  const livePaletteCounts = questionsList.reduce(
+    (acc, q) => {
+      const st = responses[q.id]?.status || 'not_visited';
+      acc[st] = (acc[st] || 0) + 1;
+      return acc;
+    },
+    {
+      not_visited: 0,
+      not_answered: 0,
+      answered: 0,
+      marked: 0,
+      answered_marked: 0,
+    }
+  );
 
   return (
     <div className="min-h-screen bg-[#F1F5F9] text-slate-900 flex flex-col">
@@ -2767,7 +2957,9 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
                     Correct
                   </span>
                   <span className="text-rose-700 bg-rose-50 px-2.5 py-1 rounded-lg">
-                    {currentQuestion.advancedFormat === 'numerical'
+                    {isNumericalQ && examMode !== 'JEE Advanced'
+                      ? '-1 Negative'
+                      : isNumericalQ
                       ? '0 Negative (JEE Adv Numerical)'
                       : isMultipleQ
                       ? '-2 Negative'
@@ -2850,11 +3042,21 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
                       return (
                         <div
                           key={letter}
+                          role={isMultipleQ ? 'checkbox' : 'radio'}
+                          aria-checked={isChecked}
+                          tabIndex={0}
                           onClick={() =>
                             isMultipleQ
                               ? handleToggleMultipleOption(idx)
                               : handleSelectSingleOption(idx)
                           }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              if (isMultipleQ) handleToggleMultipleOption(idx);
+                              else handleSelectSingleOption(idx);
+                            }
+                          }}
                           className={`flex items-center gap-3.5 p-3.5 rounded-xl border transition-all cursor-pointer max-w-2xl ${
                             isChecked
                               ? 'border-indigo-600 bg-indigo-50/60'
@@ -2887,7 +3089,8 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
                 {isNumericalQ && (
                   <div className="lg:col-span-6 bg-slate-50 rounded-2xl border border-slate-200 p-5 max-w-sm">
                     <div className="text-xs font-extrabold uppercase tracking-wider text-indigo-700 mb-2">
-                      Numerical Value Response (No Negative Marking)
+                      Numerical Value Response (
+                      {examMode === 'JEE Advanced' ? '0 Negative Marking' : '+4 / -1 NTA Marking'})
                     </div>
                     <input
                       type="text"
@@ -2956,28 +3159,28 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
                 <span className="w-4 h-4 rounded bg-slate-200 border border-slate-300 inline-block" />
                 Not Visited
               </span>
-              <span className="font-extrabold">{summaryLive.paletteCounts.not_visited}</span>
+              <span className="font-extrabold">{livePaletteCounts.not_visited}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 rounded bg-[#DC2626] inline-block" />
                 Not Answered
               </span>
-              <span className="font-extrabold">{summaryLive.paletteCounts.not_answered}</span>
+              <span className="font-extrabold">{livePaletteCounts.not_answered}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 rounded bg-[#16A34A] inline-block" />
                 Answered
               </span>
-              <span className="font-extrabold">{summaryLive.paletteCounts.answered}</span>
+              <span className="font-extrabold">{livePaletteCounts.answered}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 rounded bg-[#7C3AED] inline-block" />
                 Marked for Review
               </span>
-              <span className="font-extrabold">{summaryLive.paletteCounts.marked}</span>
+              <span className="font-extrabold">{livePaletteCounts.marked}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-2">
@@ -2986,7 +3189,7 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
                 </span>
                 Answered &amp; Marked
               </span>
-              <span className="font-extrabold">{summaryLive.paletteCounts.answered_marked}</span>
+              <span className="font-extrabold">{livePaletteCounts.answered_marked}</span>
             </div>
           </div>
 
@@ -3055,6 +3258,9 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
+          {submitCbtError && (
+            <span className="text-xs font-bold text-rose-600">{submitCbtError}</span>
+          )}
           <button
             type="button"
             onClick={handleSaveAndNext}
@@ -3064,10 +3270,11 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
           </button>
           <button
             type="button"
+            disabled={submittingCbt}
             onClick={handleTriggerSubmit}
-            className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold cursor-pointer"
+            className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-extrabold cursor-pointer"
           >
-            Submit Exam
+            {submittingCbt ? 'Grading on Server...' : 'Submit Exam'}
           </button>
         </div>
       </footer>
@@ -3084,7 +3291,7 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
                 <strong>JEE Main Section A (MCQs):</strong> +4 for correct, -1 negative marking.
               </li>
               <li>
-                <strong>JEE Main Section B (5 Compulsory Numericals per subject):</strong> +4 for correct, <strong>0 negative marking</strong> per 2025/2026 NTA official rules.
+                <strong>JEE Main Section B (5 Compulsory Numericals per subject):</strong> +4 for correct, <strong>-1 negative marking</strong> per official NTA JEE Main 2027 Paper 1 rules.
               </li>
               <li>
                 <strong>JEE Advanced Multiple-Choice:</strong> +4 if all correct options chosen, +1 partial mark per correct option if no wrong option is chosen, -2 if any wrong option is chosen.
@@ -3174,9 +3381,11 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
 
                     <div className="text-xs text-slate-700 bg-white p-3 rounded-xl border border-slate-200/80">
                       <strong className="text-slate-900 block mb-1">
-                        Verified Step-by-Step Solution:
+                        Server-Verified Step-by-Step Solution:
                       </strong>
-                      <MathRichText content={q.explanation} />
+                      <MathRichText
+                        content={serverSolutions[q.id]?.explanation || q.explanation}
+                      />
                     </div>
                   </div>
                 );
@@ -3189,7 +3398,7 @@ export const CBTMockExamView: React.FC<CBTMockExamProps> = ({
               </span>
               <button
                 type="button"
-                onClick={() => onSubmitMock(submittedSummary, focusEvents)}
+                onClick={() => onSubmitMock(submittedSummary, focusEvents, questionsList, responses)}
                 className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold cursor-pointer"
               >
                 Finish &amp; Go to Progress Dashboard →

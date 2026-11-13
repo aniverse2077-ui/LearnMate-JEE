@@ -1,12 +1,22 @@
 import { openDB, IDBPDatabase } from 'idb';
 import {
   db,
+  isFirebaseConfigured,
   getAccessToken,
   getCurrentActiveUid,
   getFirebaseIdToken,
   googleSignIn,
 } from '../firebase';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  setDoc,
+} from 'firebase/firestore';
+import { computeStableContentHash, splitSourceIntoPages } from './studyBundleBuilder';
 
 export interface DriveFileItem {
   id: string;
@@ -32,6 +42,7 @@ export interface StructuredUpstreamError {
   message: string;
   retryAfterSeconds: number;
   status: number;
+  details?: Record<string, unknown>;
 }
 
 const IDB_NAME = 'learnmate_jee_storage_v1';
@@ -148,8 +159,8 @@ export async function getDocumentFromIndexedDb(
 }
 
 /**
- * Syncs large extracted text and study bundle metadata to Firestore in 3,500-char chunks
- * so no study note is ever truncated.
+ * Syncs large extracted text and study material metadata to canonical `/users/{uid}/materials/{materialId}`
+ * and `/users/{uid}/materials/{materialId}/chunks/{chunkId}` in compliance with strict Firestore rules.
  */
 export async function syncChunkedMaterialToFirestore(
   uidOrParams:
@@ -161,6 +172,7 @@ export async function syncChunkedMaterialToFirestore(
         subject: string;
         chapter: string;
         sourceType: string;
+        sourceRef?: string;
         fullText: string;
         pageCount: number;
       },
@@ -175,11 +187,18 @@ export async function syncChunkedMaterialToFirestore(
     currentPage?: number;
     progressPct?: number;
     contentSummary: string;
+    extractionQuality?: 'full' | 'partial' | 'needs_ocr' | 'unavailable';
   }
-): Promise<void> {
+): Promise<{ synced: boolean; error?: string }> {
+  if (!isFirebaseConfigured || !db) {
+    return { synced: false, error: 'Firebase client is not configured; saved locally in IndexedDB.' };
+  }
   const uid = typeof uidOrParams === 'string' ? uidOrParams : uidOrParams.uid;
-  const materialId =
-    typeof uidOrParams === 'string' ? materialIdArg || `mat-${Date.now()}` : uidOrParams.materialId;
+  const materialId = (
+    typeof uidOrParams === 'string' ? materialIdArg || `mat-${Date.now()}` : uidOrParams.materialId
+  )
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 120);
   const title = typeof uidOrParams === 'string' ? dataArg?.title || 'Material' : uidOrParams.title;
   const subject =
     typeof uidOrParams === 'string' ? dataArg?.subject || 'Physics' : uidOrParams.subject;
@@ -187,62 +206,138 @@ export async function syncChunkedMaterialToFirestore(
     typeof uidOrParams === 'string' ? dataArg?.chapter || 'General' : uidOrParams.chapter;
   const sourceType =
     typeof uidOrParams === 'string' ? dataArg?.sourceType || 'pdf' : uidOrParams.sourceType;
-  const pageCount =
-    typeof uidOrParams === 'string' ? dataArg?.pageCount || 3 : uidOrParams.pageCount;
-  const text =
-    typeof uidOrParams === 'string'
-      ? dataArg?.contentSummary || ''
-      : uidOrParams.fullText || '';
+  const sourceRef =
+    (typeof uidOrParams === 'string' ? dataArg?.sourceRef : uidOrParams.sourceRef) || title;
+  const pageCount = Math.max(
+    1,
+    Math.min(500, typeof uidOrParams === 'string' ? dataArg?.pageCount || 1 : uidOrParams.pageCount)
+  );
+  const fullText =
+    typeof uidOrParams === 'string' ? dataArg?.contentSummary || '' : uidOrParams.fullText || '';
 
-  if (!uid || uid.startsWith('local_') || uid === 'anonymous') return;
-  const CHUNK_SIZE = 3500;
-  const totalChunks = Math.max(1, Math.ceil(text.length / CHUNK_SIZE));
+  if (!uid || uid.startsWith('local_') || uid === 'anonymous') {
+    return { synced: false };
+  }
+
+  const contentHash = computeStableContentHash(`${title}:${fullText}`);
+  const extractionQuality =
+    typeof uidOrParams === 'string' && dataArg?.extractionQuality
+      ? dataArg.extractionQuality
+      : fullText.trim().length > 150
+      ? 'full'
+      : fullText.trim().length > 0
+      ? 'partial'
+      : 'needs_ocr';
 
   try {
     const matRef = doc(db, 'users', uid, 'materials', materialId);
-    await setDoc(
-      matRef,
-      {
+    const existingSnap = await getDoc(matRef).catch(() => null);
+    const createdAtVal = existingSnap?.exists()
+      ? existingSnap.data()?.createdAt || serverTimestamp()
+      : serverTimestamp();
+
+    await setDoc(matRef, {
+      userId: uid,
+      title: title.slice(0, 190),
+      subject:
+        subject === 'Physics' || subject === 'Chemistry' || subject === 'Mathematics'
+          ? subject
+          : 'Physics',
+      chapter: chapter.slice(0, 115) || 'General',
+      sourceType:
+        sourceType === 'pdf' ||
+        sourceType === 'photo' ||
+        sourceType === 'youtube' ||
+        sourceType === 'text' ||
+        sourceType === 'drive'
+          ? sourceType
+          : 'pdf',
+      sourceRef: sourceRef.slice(0, 480),
+      pageCount,
+      currentPage: Math.max(1, dataArg?.currentPage || 1),
+      contentSummary: fullText.slice(0, 39000),
+      extractionQuality,
+      contentHash,
+      createdAt: createdAtVal,
+      updatedAt: serverTimestamp(),
+    });
+
+    // Store full page chunks in `/users/{uid}/materials/{materialId}/chunks/{chunkId}` (up to 120 chunks)
+    const docType =
+      dataArg?.sourceType === 'photo' ||
+      dataArg?.sourceType === 'youtube' ||
+      dataArg?.sourceType === 'text' ||
+      dataArg?.sourceType === 'drive'
+        ? dataArg.sourceType
+        : 'pdf';
+    const pages = splitSourceIntoPages(fullText, docType).slices.slice(0, 120);
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      if (!page.text.trim()) continue;
+      const chunkId = `chunk_${String(i + 1).padStart(4, '0')}`;
+      const chunkRef = doc(db, 'users', uid, 'materials', materialId, 'chunks', chunkId);
+      await setDoc(chunkRef, {
         userId: uid,
-        title: title.slice(0, 190),
-        subject,
-        chapter: chapter.slice(0, 95),
-        sourceType,
-        pageCount,
-        currentPage: 1,
-        progressPct: 15,
-        contentSummary: text.slice(0, CHUNK_SIZE),
-        totalTextChunks: totalChunks,
-        createdAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-  } catch {
-    // Non-blocking sync
+        materialId,
+        pageNumber: Math.max(1, Math.min(500, page.pageNumber)),
+        chunkIndex: i,
+        text: page.text.slice(0, 19000),
+        ...(page.timestampRange ? { timestampLabel: page.timestampRange.slice(0, 40) } : {}),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    return { synced: true };
+  } catch (err: any) {
+    const msg =
+      err?.code === 'permission-denied'
+        ? 'Cloud sync blocked by Firestore permissions (email verification may be required). Saved locally.'
+        : `Cloud sync failed (${err?.message || 'network error'}). Saved locally in IndexedDB.`;
+    return { synced: false, error: msg };
   }
 }
 
 /**
- * Extracts text and page count from a client-side PDF file using pdfjs-dist,
- * with graceful fallback if the PDF contains scanned images (routing to OCR).
+ * Configures local Vite-bundled pdf.js worker (no external CDN dependency).
  */
-export async function extractPdfTextAndMetadataWithPdfJs(file: File): Promise<{
+async function loadPdfJsConfigured() {
+  const pdfjsLib = await import('pdfjs-dist');
+  if (pdfjsLib.GlobalWorkerOptions && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    try {
+      const workerMod: any = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
+      if (workerMod?.default) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = workerMod.default;
+      }
+    } catch {
+      // Leave unset in environments without bundler ?url support
+    }
+  }
+  return pdfjsLib;
+}
+
+/**
+ * Extracts text and real page count from a client-side PDF file using pdfjs-dist across ALL pages (up to 250 pages),
+ * identifies scanned/image-only pages (`text.length < 40`) for OCR, and never invents fake page counts from `file.size`.
+ */
+export async function extractPdfTextAndMetadataWithPdfJs(
+  file: File,
+  onProgress?: (pct: number, currentPage: number, totalPages: number) => void
+): Promise<{
   pageCount: number;
   extractedText: string;
+  scannedPagesCount: number;
+  scannedPageNumbers: number[];
+  extractionError?: string;
 }> {
   try {
-    const pdfjsLib = await import('pdfjs-dist');
-    if (pdfjsLib.GlobalWorkerOptions && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${
-        pdfjsLib.version || '4.10.38'
-      }/build/pdf.worker.min.mjs`;
-    }
+    const pdfjsLib = await loadPdfJsConfigured();
     const arrayBuffer = await file.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
     const pdf = await loadingTask.promise;
     const numPages = pdf.numPages || 1;
-    const maxPagesToScan = Math.min(numPages, 25);
+    const maxPagesToScan = Math.min(numPages, 250);
     const pageTexts: string[] = [];
+    const scannedPageNumbers: number[] = [];
 
     for (let i = 1; i <= maxPagesToScan; i++) {
       const page = await pdf.getPage(i);
@@ -250,22 +345,109 @@ export async function extractPdfTextAndMetadataWithPdfJs(file: File): Promise<{
       const strings = (content.items as any[])
         .map((item) => item.str || '')
         .join(' ')
+        .replace(/\s+/g, ' ')
         .trim();
-      if (strings) {
+      if (strings.length >= 40) {
         pageTexts.push(`[Page ${i}] ${strings}`);
+      } else {
+        if (strings.length >= 8) {
+          pageTexts.push(`[Page ${i}] ${strings}`);
+        }
+        scannedPageNumbers.push(i);
+      }
+      if (onProgress && (i === 1 || i % 5 === 0 || i === maxPagesToScan)) {
+        onProgress(Math.round((i / maxPagesToScan) * 100), i, maxPagesToScan);
       }
     }
 
     return {
       pageCount: numPages,
       extractedText: pageTexts.join('\n\n'),
+      scannedPagesCount: scannedPageNumbers.length,
+      scannedPageNumbers,
     };
-  } catch {
+  } catch (err: any) {
     return {
-      pageCount: Math.max(3, Math.min(20, Math.ceil(file.size / 45000))),
+      pageCount: 1,
       extractedText: '',
+      scannedPagesCount: 0,
+      scannedPageNumbers: [],
+      extractionError:
+        err?.message || 'Unable to parse PDF binary locally. Check that the file is not encrypted or corrupted.',
     };
   }
+}
+
+/**
+ * Renders scanned/image-only PDF pages onto an offscreen canvas in batches of 3
+ * and sends them to `/api/ai/analyze` for vision OCR extraction.
+ */
+export async function extractScannedPdfPagesViaOcr(
+  file: File,
+  scannedPageNumbers: number[],
+  onProgress?: (completed: number, total: number) => void
+): Promise<{ ocrTextByPage: Map<number, string>; errors: string[] }> {
+  const ocrTextByPage = new Map<number, string>();
+  const errors: string[] = [];
+  if (!scannedPageNumbers.length || typeof document === 'undefined') {
+    return { ocrTextByPage, errors };
+  }
+
+  const maxOcrPages = scannedPageNumbers.slice(0, 60);
+  try {
+    const pdfjsLib = await loadPdfJsConfigured();
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const batchSize = 3;
+
+    for (let idx = 0; idx < maxOcrPages.length; idx += batchSize) {
+      const batch = maxOcrPages.slice(idx, idx + batchSize);
+      const batchResults = await Promise.all(
+        batch.map(async (pageNum) => {
+          try {
+            const page = await pdf.getPage(pageNum);
+            const viewport = page.getViewport({ scale: 1.35 });
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(viewport.width));
+            canvas.height = Math.max(1, Math.round(viewport.height));
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return { pageNum, text: '', error: 'Canvas 2D context unavailable' };
+            await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+            const base64 = dataUrl.split(',')[1] || '';
+            const res = await apiFetchWithAuth<{ text?: string }>('/api/ai/analyze', {
+              mediaBase64: base64,
+              mimeType: 'image/jpeg',
+              sourceType: 'photo',
+              prompt: `Transcribe ALL printed/handwritten text and LaTeX equations ($...$ / $$...$$) from Page ${pageNum} verbatim. Output clean JEE study notes for Page ${pageNum} only.`,
+            });
+            if (!res.ok) {
+              return { pageNum, text: '', error: res.error.message };
+            }
+            return { pageNum, text: (res.data.text || '').trim(), error: '' };
+          } catch (e: any) {
+            return { pageNum, text: '', error: e?.message || `Page ${pageNum} render failed` };
+          }
+        })
+      );
+
+      for (const item of batchResults) {
+        if (item.text) {
+          ocrTextByPage.set(item.pageNum, `[Page ${item.pageNum}] ${item.text}`);
+        } else if (item.error && errors.length < 3) {
+          errors.push(`Page ${item.pageNum}: ${item.error}`);
+        }
+      }
+
+      if (onProgress) {
+        onProgress(Math.min(maxOcrPages.length, idx + batch.length), maxOcrPages.length);
+      }
+    }
+  } catch (err: any) {
+    errors.push(err?.message || 'PDF OCR initialization failed.');
+  }
+
+  return { ocrTextByPage, errors };
 }
 
 /**
@@ -292,14 +474,12 @@ export function getUserScopedStorageKey(baseKey: string, uidOverride?: string): 
 }
 
 /**
- * Builds standard authenticated JSON request headers with Firebase ID token & active UID.
+ * Builds standard authenticated JSON request headers using Firebase ID token (never sends spoofable X-LearnMate-Uid).
  */
 export async function getAuthenticatedRequestHeaders(): Promise<Record<string, string>> {
   const idToken = await getFirebaseIdToken();
-  const uid = getCurrentActiveUid();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-LearnMate-Uid': uid,
   };
   if (idToken) {
     headers.Authorization = `Bearer ${idToken}`;
@@ -308,23 +488,24 @@ export async function getAuthenticatedRequestHeaders(): Promise<Record<string, s
 }
 
 /**
- * Authenticated fetch wrapper for `/api/ai/*` routes that attaches the Firebase ID token
- * and parses structured 429/503 error payloads (`{ errorCode, message, retryAfterSeconds }`).
+ * Authenticated fetch wrapper for `/api/*` routes that attaches the Firebase ID token
+ * and parses structured 401/403/422/429/503 error payloads.
  */
 export async function apiFetchWithAuth<T = any>(
   endpoint: string,
-  body: Record<string, any>
+  body?: Record<string, any>,
+  method: 'POST' | 'GET' | 'DELETE' = 'POST'
 ): Promise<
-  | { ok: true; data: T & Partial<StructuredUpstreamError>; error?: undefined }
-  | { ok: false; data: Partial<T> & StructuredUpstreamError; error: StructuredUpstreamError }
+  | { ok: true; data: T; error?: undefined }
+  | { ok: false; data: Partial<T>; error: StructuredUpstreamError }
 > {
   try {
     const headers = await getAuthenticatedRequestHeaders();
 
     const res = await fetch(endpoint, {
-      method: 'POST',
+      method,
       headers,
-      body: JSON.stringify(body),
+      body: method === 'GET' || !body ? undefined : JSON.stringify(body),
     });
 
     const json = await res.json().catch(() => ({}));
@@ -334,30 +515,31 @@ export async function apiFetchWithAuth<T = any>(
         message:
           json.message ||
           json.error ||
-          `AI service returned HTTP ${res.status}. Please retry in a few seconds.`,
+          `Service returned HTTP ${res.status}. Please retry in a few seconds.`,
         retryAfterSeconds: Number(json.retryAfterSeconds ?? 5),
         status: res.status,
+        details: json,
       };
       return {
         ok: false,
-        data: errObj as Partial<T> & StructuredUpstreamError,
+        data: json as Partial<T>,
         error: errObj,
       };
     }
 
-    return { ok: true, data: json as T & Partial<StructuredUpstreamError> };
+    return { ok: true, data: json as T };
   } catch (err: any) {
     const errObj: StructuredUpstreamError = {
       errorCode: 'NETWORK_ERROR',
       message:
         err?.message ||
-        'Network error communicating with LearnMate JEE AI backend. Check your connection and click Retry.',
+        'Network error communicating with LearnMate JEE backend. Check your connection and retry.',
       retryAfterSeconds: 5,
       status: 503,
     };
     return {
       ok: false,
-      data: errObj as Partial<T> & StructuredUpstreamError,
+      data: {} as Partial<T>,
       error: errObj,
     };
   }
@@ -650,8 +832,8 @@ export interface CbtInProgressDraft {
 }
 
 /**
- * Auto-saves in-progress CBT mock exam state to UID-scoped localStorage and Firestore
- * every 15s and on response updates for instant crash/reload recovery.
+ * Auto-saves in-progress CBT mock exam state to UID-scoped localStorage and canonical
+ * `/users/{uid}/cbtDrafts/{draftId}` every 15s and on response updates.
  */
 export async function saveCbtInProgressDraft(draft: CbtInProgressDraft): Promise<void> {
   const uid = getCurrentActiveUid();
@@ -662,31 +844,31 @@ export async function saveCbtInProgressDraft(draft: CbtInProgressDraft): Promise
     // ignore quota errors
   }
 
-  if (!uid || uid.startsWith('local_') || uid === 'anonymous') return;
+  if (!isFirebaseConfigured || !db || !uid || uid.startsWith('local_') || uid === 'anonymous') {
+    return;
+  }
   try {
-    const safeId = `cbt_draft_${uid}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
-    const draftRef = doc(db, 'revisions', safeId);
-    await setDoc(
-      draftRef,
-      {
-        userId: uid,
-        chapter: draft.examMode,
-        subject: 'Physics',
-        cardType: 'summary',
-        title: `In-Progress ${draft.examMode} CBT Draft`,
-        body: JSON.stringify({
-          examMode: draft.examMode,
-          secondsRemaining: draft.secondsRemaining,
-          currentQNumber: draft.currentQNumber,
-          focusSwitchCount: draft.focusSwitchCount,
-          responses: draft.responses,
-        }).slice(0, 4800),
-        trapOrTip: `Saved at ${draft.savedAt}`,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
+    const safeId = `cbt_draft_${draft.examMode}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
+    const draftRef = doc(db, 'users', uid, 'cbtDrafts', safeId);
+    const existingSnap = await getDoc(draftRef).catch(() => null);
+    const createdAtVal = existingSnap?.exists()
+      ? existingSnap.data()?.createdAt || serverTimestamp()
+      : serverTimestamp();
+
+    await setDoc(draftRef, {
+      userId: uid,
+      mockTitle: `${draft.examMode} In-Progress Draft`.slice(0, 190),
+      remainingSeconds: Math.max(0, Math.min(21600, Math.round(draft.secondsRemaining))),
+      responsesJson: JSON.stringify({
+        examMode: draft.examMode,
+        currentQNumber: draft.currentQNumber,
+        focusSwitchCount: draft.focusSwitchCount,
+        responses: draft.responses,
+        savedAt: draft.savedAt,
+      }).slice(0, 145000),
+      createdAt: createdAtVal,
+      updatedAt: serverTimestamp(),
+    });
   } catch {
     // non-blocking cloud sync
   }
@@ -718,8 +900,8 @@ export async function clearCbtInProgressDraft(): Promise<void> {
 }
 
 /**
- * Syncs Mistake Book, SM-2 Flashcards, and Custom Formulas to Firestore (`/revisions/{revisionId}`)
- * while preserving instant local storage responsiveness.
+ * Syncs Mistake Book, SM-2 Flashcards, and Custom Formulas to canonical
+ * `/users/{uid}/revisions/{revisionId}` while preserving instant localStorage responsiveness.
  */
 export async function syncRevisionStateToFirestore(
   collectionKey: 'mistakes' | 'sm2_cards' | 'custom_formulas',
@@ -732,38 +914,42 @@ export async function syncRevisionStateToFirestore(
     // ignore localStorage errors
   }
 
-  if (!uid || uid.startsWith('local_') || uid === 'anonymous') return;
+  if (!isFirebaseConfigured || !db || !uid || uid.startsWith('local_') || uid === 'anonymous') {
+    return;
+  }
   try {
-    const safeId = `sync_${collectionKey}_${uid}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
-    const syncRef = doc(db, 'revisions', safeId);
+    const safeId = `sync_${collectionKey}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
+    const syncRef = doc(db, 'users', uid, 'revisions', safeId);
+    const existingSnap = await getDoc(syncRef).catch(() => null);
+    const createdAtVal = existingSnap?.exists()
+      ? existingSnap.data()?.createdAt || serverTimestamp()
+      : serverTimestamp();
+
     const cardType =
       collectionKey === 'mistakes'
         ? 'mistake'
         : collectionKey === 'custom_formulas'
         ? 'formula'
         : 'flashcard';
-    await setDoc(
-      syncRef,
-      {
-        userId: uid,
-        chapter: 'All Chapters',
-        subject: 'Physics',
-        cardType,
-        title: `Synced ${collectionKey} (${items.length})`,
-        body: JSON.stringify(items).slice(0, 4800),
-        trapOrTip: `Cloud synced (${items.length} items)`,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
+    await setDoc(syncRef, {
+      userId: uid,
+      chapter: 'All Chapters',
+      subject: 'Physics',
+      cardType,
+      title: `Synced ${collectionKey} (${items.length})`,
+      body: JSON.stringify(items).slice(0, 4800),
+      trapOrTip: `Cloud synced (${items.length} items)`,
+      createdAt: createdAtVal,
+      updatedAt: serverTimestamp(),
+    });
   } catch {
     // non-blocking cloud sync
   }
 }
 
 /**
- * Persists freehand vector annotation strokes per material across sessions (localStorage + Firestore `/creations/{id}`).
+ * Persists freehand vector annotation strokes per material across sessions
+ * (UID-scoped localStorage + canonical `/users/{uid}/creations/{id}`).
  */
 export async function saveCanvasAnnotationsForMaterial(
   materialId: string,
@@ -779,25 +965,28 @@ export async function saveCanvasAnnotationsForMaterial(
     // ignore
   }
 
-  if (!uid || uid.startsWith('local_') || uid === 'anonymous') return;
+  if (!isFirebaseConfigured || !db || !uid || uid.startsWith('local_') || uid === 'anonymous') {
+    return;
+  }
   try {
-    const safeId = `ann_${materialId}_${uid}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
-    const annRef = doc(db, 'creations', safeId);
-    await setDoc(
-      annRef,
-      {
-        userId: uid,
-        title: `Annotations for ${materialId}`.slice(0, 190),
-        prompt: `Freehand vector strokes (${strokes.length})`,
-        category: 'diagram',
-        subject: 'All',
-        sourceLabel: materialId.slice(0, 190),
-        payload: JSON.stringify(strokes).slice(0, 95000),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
+    const safeId = `ann_${materialId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
+    const annRef = doc(db, 'users', uid, 'creations', safeId);
+    const existingSnap = await getDoc(annRef).catch(() => null);
+    const createdAtVal = existingSnap?.exists()
+      ? existingSnap.data()?.createdAt || serverTimestamp()
+      : serverTimestamp();
+
+    await setDoc(annRef, {
+      userId: uid,
+      title: `Annotations for ${materialId}`.slice(0, 190),
+      prompt: `Freehand vector strokes (${strokes.length})`,
+      category: 'diagram',
+      subject: 'All',
+      sourceLabel: materialId.slice(0, 190),
+      payload: JSON.stringify(strokes).slice(0, 95000),
+      createdAt: createdAtVal,
+      updatedAt: serverTimestamp(),
+    });
   } catch {
     // non-blocking
   }
@@ -814,47 +1003,268 @@ export function loadCanvasAnnotationsForMaterial(materialId: string): any[] {
 
 export interface SignedCloudStorageTicket {
   ok: boolean;
-  provider: 'firebase-cloud-storage' | 'cloud-storage-fallback';
-  assetId: string;
-  objectPath: string;
-  signedUrl: string;
-  expiresInSeconds: number;
+  storageProvider: 'firebase-cloud-storage' | 'unconfigured';
+  storageConfigured: boolean;
+  assetId?: string;
+  objectPath?: string;
+  signedUrl?: string;
+  expiresInSeconds?: number;
+  errorCode?: string;
+  message?: string;
 }
 
 /**
- * Requests a signed Cloud Storage upload/download URL from `/api/storage/signed-url` for cross-device PDF & handwritten image persistence.
+ * Requests a real Cloud Storage V4 signed URL from `/api/storage/signed-url`.
+ * Returns honest `storageConfigured: false` when bucket/credentials are absent (never returns a fake local fallback URL).
  */
 export async function requestSignedCloudStorageUrl(params: {
   fileName: string;
   mimeType: string;
   operation?: 'upload' | 'download';
   sizeBytes?: number;
+  assetId?: string;
 }): Promise<SignedCloudStorageTicket> {
-  const headers = await getAuthenticatedRequestHeaders();
-  const res = await fetch('/api/storage/signed-url', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      fileName: params.fileName,
-      mimeType: params.mimeType,
-      operation: params.operation || 'upload',
-      sizeBytes: params.sizeBytes || 0,
-    }),
+  const res = await apiFetchWithAuth<SignedCloudStorageTicket>('/api/storage/signed-url', {
+    fileName: params.fileName,
+    mimeType: params.mimeType,
+    operation: params.operation || 'upload',
+    sizeBytes: params.sizeBytes || 0,
+    ...(params.assetId ? { assetId: params.assetId } : {}),
   });
+
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.message || `Signed URL request failed (${res.status})`);
+    return {
+      ok: false,
+      storageProvider: 'unconfigured',
+      storageConfigured: false,
+      errorCode: res.error.errorCode,
+      message: res.error.message,
+    };
   }
-  return res.json();
+  return res.data as SignedCloudStorageTicket;
+}
+
+export async function confirmCloudUpload(assetId: string) {
+  return apiFetchWithAuth<{ ok: boolean; asset: any }>('/api/storage/confirm-upload', {
+    assetId,
+  });
+}
+
+export async function deleteCloudAsset(assetId: string) {
+  return apiFetchWithAuth<{ deleted: boolean; assetId: string }>(
+    `/api/storage/assets/${encodeURIComponent(assetId)}`,
+    undefined,
+    'DELETE'
+  );
+}
+
+export async function deleteAccountOnServer() {
+  return apiFetchWithAuth<{
+    deleted: boolean;
+    deletedFirestoreDocs: number;
+    deletedGcsFiles: number;
+    authDeleted: boolean;
+  }>('/api/account', undefined, 'DELETE');
+}
+
+export async function verifySinglePyqAnswerOnServer(params: {
+  questionId: string;
+  selectedOption?: number;
+  selectedOptions?: number[];
+  numericalValue?: string | number;
+}) {
+  return apiFetchWithAuth<{
+    questionId: string;
+    isCorrect: boolean;
+    correctIndex: number;
+    correctIndices?: number[];
+    numericalAnswer?: number;
+    explanation: string;
+    keyVersion: string;
+  }>('/api/pyq/verify-answer', params);
+}
+
+export async function gradeCbtAttemptOnServerApi(params: {
+  questions?: any[];
+  questionIds?: string[];
+  attemptType?: 'official_mock' | 'custom_drill';
+  responses: Record<string, any>;
+  examMode: string;
+  shiftDifficulty?: 'Easy' | 'Moderate' | 'Tough';
+}) {
+  return apiFetchWithAuth<{
+    summary: any;
+    scaledScoreOutOf300: number;
+    percentilePrediction: any;
+    verifiedAtIso: string;
+    examMode: string;
+    keyVersion: string;
+    questionSolutions: Record<
+      string,
+      {
+        correctIndex: number;
+        correctIndices?: number[];
+        numericalAnswer?: number;
+        explanation: string;
+      }
+    >;
+  }>('/api/cbt/grade', params);
+}
+
+export async function ingestDocumentOnServer(params: {
+  materialId?: string;
+  title: string;
+  subject?: 'Physics' | 'Chemistry' | 'Mathematics';
+  chapter?: string;
+  sourceType?: 'pdf' | 'photo' | 'youtube' | 'text' | 'drive';
+  sourceRef?: string;
+  rawText: string;
+}) {
+  return apiFetchWithAuth('/api/ingest/document', params);
+}
+
+export async function ingestYouTubeOnServer(params: {
+  url: string;
+  transcriptText?: string;
+  title?: string;
+}) {
+  return apiFetchWithAuth('/api/ingest/youtube', params);
+}
+
+export async function fetchCommercialPlans() {
+  try {
+    const res = await fetch('/api/commercial/plans');
+    const json = await res.json();
+    return { ok: res.ok, data: json };
+  } catch {
+    return { ok: false, data: { paymentsConfigured: false, plans: [] } };
+  }
+}
+
+export async function fetchCommercialEntitlements() {
+  const idToken = await getFirebaseIdToken();
+  if (!idToken) {
+    const plansRes = await fetchCommercialPlans();
+    return {
+      ok: true as const,
+      data: {
+        uid: getCurrentActiveUid(),
+        tier: 'free' as const,
+        status: 'active' as const,
+        billingCycle: 'none' as const,
+        currentPeriodEndIso: null,
+        cancelAtPeriodEnd: false,
+        paymentsConfigured: Boolean(plansRes.data?.paymentsConfigured),
+      },
+    };
+  }
+  return apiFetchWithAuth<{
+    uid: string;
+    tier: 'free' | 'pro' | 'institute';
+    status: 'active' | 'grace_period' | 'cancelled' | 'expired';
+    billingCycle: 'monthly' | 'annual' | 'none';
+    currentPeriodEndIso: string | null;
+    cancelAtPeriodEnd: boolean;
+    paymentsConfigured: boolean;
+    quota?: { used: number; limit: number; remaining: number };
+  }>('/api/commercial/entitlements', undefined, 'GET');
+}
+
+export async function fetchBillingInvoices() {
+  const idToken = await getFirebaseIdToken();
+  if (!idToken) {
+    return {
+      ok: true as const,
+      data: {
+        uid: getCurrentActiveUid(),
+        invoices: [],
+      },
+    };
+  }
+  return apiFetchWithAuth<{
+    uid: string;
+    invoices: {
+      invoiceId: string;
+      planId: string;
+      amountInr: number;
+      currency: string;
+      status: string;
+      createdAtIso: string;
+    }[];
+  }>('/api/commercial/invoices', undefined, 'GET');
+}
+
+export async function createBillingCheckoutSession(params: {
+  planId: 'pro_aspirant' | 'institute_cohort';
+  billingCycle: 'monthly' | 'annual';
+}) {
+  return apiFetchWithAuth('/api/commercial/checkout', params);
+}
+
+export async function reportQuestionIssueOnServer(params: {
+  questionId: string;
+  issueType:
+    | 'wrong_answer_key'
+    | 'typo_or_latex'
+    | 'missing_diagram'
+    | 'provenance_mismatch'
+    | 'other';
+  details: string;
+}) {
+  return apiFetchWithAuth('/api/pyq/report-issue', params);
 }
 
 /**
- * Lazy-loads official shift PYQ JSON packs from `/pyq-packs/*.json` or `/api/pyq/packs/:packId` and caches them in IndexedDB/localStorage.
+ * Deletes all tenant-scoped Firestore subcollections & root profile for explicit GDPR/DPDP account deletion.
+ */
+export async function purgeUserFirestoreData(uid: string): Promise<number> {
+  if (!isFirebaseConfigured || !db || !uid || uid.startsWith('local_')) return 0;
+  let deleted = 0;
+  const subcollections = [
+    'materials',
+    'tasks',
+    'creations',
+    'mockAttempts',
+    'revisions',
+    'flashcards',
+    'studyJobs',
+    'cbtDrafts',
+  ];
+  for (const sub of subcollections) {
+    try {
+      const snap = await getDocs(collection(db, 'users', uid, sub));
+      for (const d of snap.docs) {
+        if (sub === 'materials') {
+          const chunkSnap = await getDocs(collection(db, 'users', uid, 'materials', d.id, 'chunks'));
+          for (const c of chunkSnap.docs) {
+            await deleteDoc(c.ref);
+            deleted += 1;
+          }
+        }
+        await deleteDoc(d.ref);
+        deleted += 1;
+      }
+    } catch {
+      // continue deleting remaining collections
+    }
+  }
+  try {
+    await deleteDoc(doc(db, 'users', uid));
+    deleted += 1;
+  } catch {
+    // ignore
+  }
+  return deleted;
+}
+
+/**
+ * Lazy-loads key-stripped official shift PYQ JSON packs from `/api/pyq/packs/:packId` (or static `/pyq-packs/*.json` fallback)
+ * and caches under versioned key `learnmate_pyq_pack_v2_${packId}`.
  */
 export async function fetchLazyPyqPack(
   packId: 'jee-main-shifts' | 'jee-advanced-papers'
 ): Promise<any> {
-  const cacheKey = `learnmate_pyq_pack_${packId}`;
+  const cacheKey = `learnmate_pyq_pack_v2_${packId}`;
   try {
     const cached = localStorage.getItem(cacheKey);
     if (cached) {
@@ -864,11 +1274,24 @@ export async function fetchLazyPyqPack(
     // ignore storage read error
   }
 
-  const res = await fetch(`/pyq-packs/${packId}.json`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch PYQ pack ${packId}`);
+  let data: any = null;
+  try {
+    const apiRes = await fetch(`/api/pyq/packs/${packId}`);
+    if (apiRes.ok) {
+      data = await apiRes.json();
+    }
+  } catch {
+    // fallback to static pack
   }
-  const data = await res.json();
+
+  if (!data) {
+    const res = await fetch(`/pyq-packs/${packId}.json`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch PYQ pack ${packId}`);
+    }
+    data = await res.json();
+  }
+
   try {
     localStorage.setItem(cacheKey, JSON.stringify(data));
   } catch {

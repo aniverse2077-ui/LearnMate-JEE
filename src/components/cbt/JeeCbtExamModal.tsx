@@ -1,5 +1,10 @@
 import React from 'react';
-import { CBTMockSummary, CBTQuestion, ExamTrack } from '../../utils/jeeEngine';
+import {
+  CBTMockSummary,
+  CBTQuestion,
+  ExamTrack,
+  QuestionResponseState,
+} from '../../utils/jeeEngine';
 import { CBTMockExamView } from '../RevisePracticeProgressCBT';
 
 export interface JeeCbtExamModalProps {
@@ -8,7 +13,12 @@ export interface JeeCbtExamModalProps {
   customQuestions?: CBTQuestion[];
   customDurationMinutes?: number;
   customPaperTitle?: string;
-  onSubmitMock: (summary: CBTMockSummary, focusEvents: number) => void;
+  onSubmitMock: (
+    summary: CBTMockSummary,
+    focusEvents: number,
+    questions?: CBTQuestion[],
+    responses?: Record<string, QuestionResponseState>
+  ) => void;
   onExitMock: () => void;
   onRecordMistake?: (question: CBTQuestion, userAnswer: string) => void;
 }

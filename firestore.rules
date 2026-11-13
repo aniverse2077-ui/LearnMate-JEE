@@ -15,6 +15,14 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
+    function isOwner(userId) {
+      return isSignedIn() && isValidId(userId) && userId == request.auth.uid;
+    }
+
+    function isVerifiedOwner(userId) {
+      return isVerifiedUser() && isValidId(userId) && userId == request.auth.uid;
+    }
+
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -27,8 +35,12 @@ service cloud.firestore {
       return resource.data;
     }
 
+    function isValidSubject(subj) {
+      return subj is string && (subj == 'Physics' || subj == 'Chemistry' || subj == 'Mathematics');
+    }
+
     // Entity Blueprint 1: UserProfile (/users/{userId})
-    function isValidUserProfile(data) {
+    function isValidUserProfile(data, userId) {
       return data.keys().hasAll([
         'userId', 'displayName', 'targetExam', 'preferredLanguage',
         'streakDays', 'xp', 'level', 'focusMinutes',
@@ -39,14 +51,16 @@ service cloud.firestore {
         'userId', 'displayName', 'targetExam', 'preferredLanguage',
         'streakDays', 'xp', 'level', 'focusMinutes',
         'physicsMastery', 'chemistryMastery', 'mathsMastery',
+        'migrationVersion', 'migrationChecksum', 'migratedV2At',
+        'isMinor', 'guardianConsentGiven', 'guardianEmail',
         'createdAt', 'updatedAt'
       ]) &&
-      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
       data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
       data.targetExam is string && data.targetExam.size() <= 40 &&
       (data.targetExam == 'JEE Main 2027' || data.targetExam == 'JEE Advanced 2027' || data.targetExam == 'NEET UG 2027' || data.targetExam == 'BITSAT 2027' || data.targetExam == 'JEE Main 2028') &&
       data.preferredLanguage is string && data.preferredLanguage.size() <= 20 &&
-      (data.preferredLanguage == 'English' || data.preferredLanguage == 'Hinglish') &&
+      (data.preferredLanguage == 'English' || data.preferredLanguage == 'Hinglish' || data.preferredLanguage == 'Hindi') &&
       data.streakDays is int && data.streakDays >= 0 && data.streakDays <= 3650 &&
       data.xp is int && data.xp >= 0 && data.xp <= 10000000 &&
       data.level is int && data.level >= 1 && data.level <= 1000 &&
@@ -54,64 +68,90 @@ service cloud.firestore {
       data.physicsMastery is int && data.physicsMastery >= 0 && data.physicsMastery <= 100 &&
       data.chemistryMastery is int && data.chemistryMastery >= 0 && data.chemistryMastery <= 100 &&
       data.mathsMastery is int && data.mathsMastery >= 0 && data.mathsMastery <= 100 &&
+      (!('migrationVersion' in data) || (data.migrationVersion is int && data.migrationVersion >= 0 && data.migrationVersion <= 10)) &&
+      (!('migrationChecksum' in data) || (data.migrationChecksum is string && data.migrationChecksum.size() <= 64)) &&
+      (!('migratedV2At' in data) || (data.migratedV2At is string && data.migratedV2At.size() <= 48)) &&
+      (!('isMinor' in data) || data.isMinor is bool) &&
+      (!('guardianConsentGiven' in data) || data.guardianConsentGiven is bool) &&
+      (!('guardianEmail' in data) || (data.guardianEmail is string && data.guardianEmail.size() <= 120)) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
 
-    // Entity Blueprint 2: StudyMaterial (/materials/{materialId})
-    function isValidStudyMaterial(data) {
+    // Entity Blueprint 2: StudyMaterial (/users/{userId}/materials/{materialId})
+    function isValidStudyMaterial(data, userId) {
       return data.keys().hasAll([
         'userId', 'title', 'subject', 'chapter', 'sourceType',
         'sourceRef', 'pageCount', 'currentPage', 'contentSummary',
-        'createdAt', 'updatedAt'
+        'extractionQuality', 'contentHash', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
         'userId', 'title', 'subject', 'chapter', 'sourceType',
         'sourceRef', 'pageCount', 'currentPage', 'contentSummary',
-        'createdAt', 'updatedAt'
+        'extractionQuality', 'contentHash', 'annotationsJson', 'createdAt', 'updatedAt'
       ]) &&
-      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
       data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
-      data.subject is string && data.subject.size() <= 30 &&
-      (data.subject == 'Physics' || data.subject == 'Chemistry' || data.subject == 'Mathematics') &&
+      isValidSubject(data.subject) &&
       data.chapter is string && data.chapter.size() >= 1 && data.chapter.size() <= 120 &&
       data.sourceType is string && data.sourceType.size() <= 20 &&
       (data.sourceType == 'pdf' || data.sourceType == 'photo' || data.sourceType == 'youtube' || data.sourceType == 'text' || data.sourceType == 'drive') &&
       data.sourceRef is string && data.sourceRef.size() <= 500 &&
       data.pageCount is int && data.pageCount >= 1 && data.pageCount <= 500 &&
       data.currentPage is int && data.currentPage >= 1 && data.currentPage <= 500 &&
-      data.contentSummary is string && data.contentSummary.size() <= 20000 &&
+      data.contentSummary is string && data.contentSummary.size() <= 40000 &&
+      data.extractionQuality is string &&
+      (data.extractionQuality == 'full' || data.extractionQuality == 'partial' || data.extractionQuality == 'needs_ocr' || data.extractionQuality == 'unavailable') &&
+      data.contentHash is string && data.contentHash.size() <= 128 &&
+      (!('annotationsJson' in data) || (data.annotationsJson is string && data.annotationsJson.size() <= 100000)) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
 
-    // Entity Blueprint 3: StudyTask (/tasks/{taskId})
-    function isValidStudyTask(data) {
+    // Entity Blueprint 2b: MaterialChunk (/users/{userId}/materials/{materialId}/chunks/{chunkId})
+    function isValidMaterialChunk(data, userId, materialId) {
+      return data.keys().hasAll([
+        'userId', 'materialId', 'pageNumber', 'chunkIndex', 'text', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'materialId', 'pageNumber', 'chunkIndex', 'text', 'timestampLabel', 'createdAt', 'updatedAt'
+      ]) &&
+      data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
+      data.materialId is string && data.materialId == materialId &&
+      data.pageNumber is int && data.pageNumber >= 1 && data.pageNumber <= 500 &&
+      data.chunkIndex is int && data.chunkIndex >= 0 && data.chunkIndex <= 5000 &&
+      data.text is string && data.text.size() >= 1 && data.text.size() <= 20000 &&
+      (!('timestampLabel' in data) || (data.timestampLabel is string && data.timestampLabel.size() <= 40)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Entity Blueprint 3: StudyTask (/users/{userId}/tasks/{taskId})
+    function isValidStudyTask(data, userId) {
       return data.keys().hasAll([
         'userId', 'title', 'subject', 'dueLabel', 'completed', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
         'userId', 'title', 'subject', 'dueLabel', 'completed', 'createdAt', 'updatedAt'
       ]) &&
-      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
       data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
-      data.subject is string && data.subject.size() <= 30 &&
-      (data.subject == 'Physics' || data.subject == 'Chemistry' || data.subject == 'Mathematics') &&
+      isValidSubject(data.subject) &&
       data.dueLabel is string && data.dueLabel.size() <= 50 &&
       data.completed is bool &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
 
-    // Entity Blueprint 4: SavedCreation (/creations/{creationId})
-    function isValidSavedCreation(data) {
+    // Entity Blueprint 4: SavedCreation (/users/{userId}/creations/{creationId})
+    function isValidSavedCreation(data, userId) {
       return data.keys().hasAll([
         'userId', 'title', 'prompt', 'category', 'subject', 'sourceLabel', 'payload', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
         'userId', 'title', 'prompt', 'category', 'subject', 'sourceLabel', 'payload', 'createdAt', 'updatedAt'
       ]) &&
-      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
       data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
       data.prompt is string && data.prompt.size() >= 1 && data.prompt.size() <= 1000 &&
       data.category is string && data.category.size() <= 30 &&
@@ -124,175 +164,343 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
-    // Entity Blueprint 5: MockAttempt (/mockAttempts/{attemptId})
-    function isValidMockAttempt(data) {
+    // Entity Blueprint 5: MockAttempt (/users/{userId}/mockAttempts/{attemptId})
+    function isValidMockAttempt(data, userId) {
       return data.keys().hasAll([
         'userId', 'mockTitle', 'examType', 'score', 'maxMarks', 'accuracy',
         'durationMinutes', 'correctCount', 'incorrectCount', 'skippedCount',
         'focusEvents', 'summaryReport', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'userId', 'mockTitle', 'examType', 'score', 'maxMarks', 'accuracy',
+        'userId', 'mockTitle', 'examType', 'examVersion', 'score', 'maxMarks', 'accuracy',
         'durationMinutes', 'correctCount', 'incorrectCount', 'skippedCount',
         'focusEvents', 'summaryReport', 'createdAt', 'updatedAt'
       ]) &&
-      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
       data.mockTitle is string && data.mockTitle.size() >= 1 && data.mockTitle.size() <= 200 &&
       data.examType is string && data.examType.size() <= 20 &&
       (data.examType == 'Main' || data.examType == 'Advanced' || data.examType == 'NEET UG' || data.examType == 'BITSAT') &&
-      data.score is int && data.score >= -100 && data.score <= 360 &&
-      data.maxMarks is int && data.maxMarks >= 10 && data.maxMarks <= 360 &&
+      (!('examVersion' in data) || (data.examVersion is string && data.examVersion.size() <= 60)) &&
+      data.score is int && data.score >= -100 && data.score <= 720 &&
+      data.maxMarks is int && data.maxMarks >= 4 && data.maxMarks <= 720 &&
       (data.accuracy is int || data.accuracy is float) && data.accuracy >= 0 && data.accuracy <= 100 &&
       data.durationMinutes is int && data.durationMinutes >= 0 && data.durationMinutes <= 360 &&
-      data.correctCount is int && data.correctCount >= 0 && data.correctCount <= 200 &&
-      data.incorrectCount is int && data.incorrectCount >= 0 && data.incorrectCount <= 200 &&
-      data.skippedCount is int && data.skippedCount >= 0 && data.skippedCount <= 200 &&
+      data.correctCount is int && data.correctCount >= 0 && data.correctCount <= 250 &&
+      data.incorrectCount is int && data.incorrectCount >= 0 && data.incorrectCount <= 250 &&
+      data.skippedCount is int && data.skippedCount >= 0 && data.skippedCount <= 250 &&
       data.focusEvents is int && data.focusEvents >= 0 && data.focusEvents <= 1000 &&
       data.summaryReport is string && data.summaryReport.size() <= 20000 &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
 
-    // Entity Blueprint 6: RevisionCard (/revisions/{revisionId})
-    function isValidRevisionCard(data) {
+    // Entity Blueprint 6: RevisionCard (/users/{userId}/revisions/{revisionId})
+    function isValidRevisionCard(data, userId) {
       return data.keys().hasAll([
         'userId', 'chapter', 'subject', 'cardType', 'title', 'body', 'trapOrTip', 'createdAt', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'userId', 'chapter', 'subject', 'cardType', 'title', 'body', 'trapOrTip', 'createdAt', 'updatedAt'
+        'userId', 'chapter', 'subject', 'cardType', 'title', 'body', 'trapOrTip',
+        'recheckCount', 'masteryDelta', 'createdAt', 'updatedAt'
       ]) &&
-      data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+      data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
       data.chapter is string && data.chapter.size() >= 1 && data.chapter.size() <= 120 &&
-      data.subject is string && data.subject.size() <= 30 &&
-      (data.subject == 'Physics' || data.subject == 'Chemistry' || data.subject == 'Mathematics') &&
+      isValidSubject(data.subject) &&
       data.cardType is string && data.cardType.size() <= 30 &&
       (data.cardType == 'flashcard' || data.cardType == 'sticky' || data.cardType == 'mindmap' || data.cardType == 'summary' || data.cardType == 'mistake' || data.cardType == 'formula') &&
       data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
       data.body is string && data.body.size() >= 1 && data.body.size() <= 5000 &&
       data.trapOrTip is string && data.trapOrTip.size() <= 1000 &&
+      (!('recheckCount' in data) || (data.recheckCount is int && data.recheckCount >= 0 && data.recheckCount <= 1000)) &&
+      (!('masteryDelta' in data) || (data.masteryDelta is int && data.masteryDelta >= -100 && data.masteryDelta <= 100)) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
 
-    // 1. /users/{userId}
+    // Entity Blueprint 7: Flashcard SM-2 (/users/{userId}/flashcards/{cardId})
+    function isValidFlashcard(data, userId) {
+      return data.keys().hasAll([
+        'userId', 'chapter', 'subject', 'front', 'back', 'easeFactor',
+        'intervalDays', 'repetitions', 'dueAtIso', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'chapter', 'subject', 'front', 'back', 'easeFactor',
+        'intervalDays', 'repetitions', 'dueAtIso', 'lastReviewedIso', 'createdAt', 'updatedAt'
+      ]) &&
+      data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
+      data.chapter is string && data.chapter.size() >= 1 && data.chapter.size() <= 120 &&
+      isValidSubject(data.subject) &&
+      data.front is string && data.front.size() >= 1 && data.front.size() <= 2000 &&
+      data.back is string && data.back.size() >= 1 && data.back.size() <= 4000 &&
+      (data.easeFactor is int || data.easeFactor is float) && data.easeFactor >= 1.3 && data.easeFactor <= 4.0 &&
+      data.intervalDays is int && data.intervalDays >= 0 && data.intervalDays <= 3650 &&
+      data.repetitions is int && data.repetitions >= 0 && data.repetitions <= 500 &&
+      data.dueAtIso is string && data.dueAtIso.size() <= 40 &&
+      (!('lastReviewedIso' in data) || (data.lastReviewedIso is string && data.lastReviewedIso.size() <= 40)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Entity Blueprint 8: StudyJob (/users/{userId}/studyJobs/{jobId})
+    function isValidStudyJob(data, userId) {
+      return data.keys().hasAll([
+        'userId', 'jobType', 'status', 'progressPct', 'sourceLabel', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'jobType', 'status', 'progressPct', 'sourceLabel', 'errorMessage', 'createdAt', 'updatedAt'
+      ]) &&
+      data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
+      data.jobType is string && (data.jobType == 'pdf_chunk' || data.jobType == 'youtube_ingest' || data.jobType == 'ocr_scan' || data.jobType == 'cbt_grade') &&
+      data.status is string && (data.status == 'queued' || data.status == 'running' || data.status == 'completed' || data.status == 'failed' || data.status == 'cancelled') &&
+      data.progressPct is int && data.progressPct >= 0 && data.progressPct <= 100 &&
+      data.sourceLabel is string && data.sourceLabel.size() <= 200 &&
+      (!('errorMessage' in data) || (data.errorMessage is string && data.errorMessage.size() <= 500)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Entity Blueprint 9: CbtDraft (/users/{userId}/cbtDrafts/{draftId})
+    function isValidCbtDraft(data, userId) {
+      return data.keys().hasAll([
+        'userId', 'mockTitle', 'remainingSeconds', 'responsesJson', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'mockTitle', 'remainingSeconds', 'responsesJson', 'createdAt', 'updatedAt'
+      ]) &&
+      data.userId is string && data.userId == userId && data.userId == request.auth.uid &&
+      data.mockTitle is string && data.mockTitle.size() >= 1 && data.mockTitle.size() <= 200 &&
+      data.remainingSeconds is int && data.remainingSeconds >= 0 && data.remainingSeconds <= 21600 &&
+      data.responsesJson is string && data.responsesJson.size() <= 150000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Entity Blueprint 10: IssueReport (/issueReports/{reportId})
+    function isValidIssueReport(data) {
+      return data.keys().hasAll([
+        'userId', 'questionId', 'issueType', 'details', 'status', 'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'questionId', 'issueType', 'details', 'status', 'createdAt'
+      ]) &&
+      data.userId is string && data.userId == request.auth.uid &&
+      data.questionId is string && data.questionId.size() >= 1 && data.questionId.size() <= 128 &&
+      data.issueType is string && (data.issueType == 'wrong_answer_key' || data.issueType == 'typo_or_latex' || data.issueType == 'missing_diagram' || data.issueType == 'provenance_mismatch' || data.issueType == 'other') &&
+      data.details is string && data.details.size() >= 5 && data.details.size() <= 2000 &&
+      data.status == 'open' &&
+      data.createdAt is timestamp;
+    }
+
+    // Canonical Tenant-Scoped User Root & Subcollections: /users/{userId}/...
     match /users/{userId} {
-      allow get: if isSignedIn() && isValidId(userId) && userId == request.auth.uid;
-      allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isVerifiedUser() && isValidId(userId) && userId == request.auth.uid &&
-        isValidUserProfile(incoming()) &&
+      allow get: if isOwner(userId);
+      allow list: if false; // Zero user enumeration
+      allow create: if isVerifiedOwner(userId) &&
+        isValidUserProfile(incoming(), userId) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser() && isValidId(userId) && userId == request.auth.uid &&
-        isValidUserProfile(incoming()) &&
+      allow update: if isVerifiedOwner(userId) &&
+        isValidUserProfile(incoming(), userId) &&
         incoming().userId == existing().userId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'displayName', 'targetExam', 'preferredLanguage',
           'streakDays', 'xp', 'level', 'focusMinutes',
-          'physicsMastery', 'chemistryMastery', 'mathsMastery', 'updatedAt'
+          'physicsMastery', 'chemistryMastery', 'mathsMastery',
+          'migrationVersion', 'migrationChecksum', 'migratedV2At',
+          'isMinor', 'guardianConsentGiven', 'guardianEmail',
+          'updatedAt'
         ]);
-      allow delete: if isVerifiedUser() && isValidId(userId) && userId == request.auth.uid;
+      allow delete: if isVerifiedOwner(userId);
+
+      match /materials/{materialId} {
+        allow get, list: if isOwner(userId) && (materialId == null || isValidId(materialId));
+        allow create: if isVerifiedOwner(userId) && isValidId(materialId) &&
+          isValidStudyMaterial(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedOwner(userId) && isValidId(materialId) &&
+          isValidStudyMaterial(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'chapter', 'currentPage', 'contentSummary', 'extractionQuality', 'annotationsJson', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedOwner(userId) && isValidId(materialId);
+
+        match /chunks/{chunkId} {
+          allow get, list: if isOwner(userId) && isValidId(materialId);
+          allow create: if isVerifiedOwner(userId) && isValidId(materialId) && isValidId(chunkId) &&
+            isValidMaterialChunk(incoming(), userId, materialId) &&
+            incoming().createdAt == request.time &&
+            incoming().updatedAt == request.time;
+          allow update: if isVerifiedOwner(userId) && isValidId(materialId) && isValidId(chunkId) &&
+            isValidMaterialChunk(incoming(), userId, materialId) &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time;
+          allow delete: if isVerifiedOwner(userId) && isValidId(materialId) && isValidId(chunkId);
+        }
+      }
+
+      match /tasks/{taskId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(taskId) &&
+          isValidStudyTask(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedOwner(userId) && isValidId(taskId) &&
+          isValidStudyTask(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'subject', 'dueLabel', 'completed', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedOwner(userId) && isValidId(taskId);
+      }
+
+      match /creations/{creationId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(creationId) &&
+          isValidSavedCreation(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedOwner(userId) && isValidId(creationId) &&
+          isValidSavedCreation(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'prompt', 'payload', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedOwner(userId) && isValidId(creationId);
+      }
+
+      match /mockAttempts/{attemptId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(attemptId) &&
+          isValidMockAttempt(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedOwner(userId) && isValidId(attemptId) &&
+          isValidMockAttempt(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'summaryReport', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedOwner(userId) && isValidId(attemptId);
+      }
+
+      match /revisions/{revisionId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(revisionId) &&
+          isValidRevisionCard(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedOwner(userId) && isValidId(revisionId) &&
+          isValidRevisionCard(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'body', 'trapOrTip', 'recheckCount', 'masteryDelta', 'updatedAt'
+          ]);
+        allow delete: if isVerifiedOwner(userId) && isValidId(revisionId);
+      }
+
+      match /flashcards/{cardId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(cardId) &&
+          isValidFlashcard(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedOwner(userId) && isValidId(cardId) &&
+          isValidFlashcard(incoming(), userId) &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time;
+        allow delete: if isVerifiedOwner(userId) && isValidId(cardId);
+      }
+
+      match /studyJobs/{jobId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(jobId) &&
+          isValidStudyJob(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedOwner(userId) && isValidId(jobId) &&
+          isValidStudyJob(incoming(), userId) &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time;
+        allow delete: if isVerifiedOwner(userId) && isValidId(jobId);
+      }
+
+      match /cbtDrafts/{draftId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isVerifiedOwner(userId) && isValidId(draftId) &&
+          isValidCbtDraft(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedOwner(userId) && isValidId(draftId) &&
+          isValidCbtDraft(incoming(), userId) &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time;
+        allow delete: if isVerifiedOwner(userId) && isValidId(draftId);
+      }
+
+      // Server Admin SDK only writes for billing/entitlements (clients can read own)
+      match /entitlements/{docId} {
+        allow get, list: if isOwner(userId);
+        allow write: if false;
+      }
+
+      match /billingEvents/{eventId} {
+        allow get, list: if isOwner(userId);
+        allow write: if false;
+      }
     }
 
-    // 2. /materials/{materialId}
+    // Question / PYQ Issue Reports (authenticated write-once, owner get only)
+    match /issueReports/{reportId} {
+      allow get: if isSignedIn() && isValidId(reportId) && existing().userId == request.auth.uid;
+      allow list: if false;
+      allow create: if isVerifiedUser() && isValidId(reportId) &&
+        isValidIssueReport(incoming()) &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // Helper: Lock legacy top-level collections once verified parity migration reaches v2
+    function isLegacyMigrationPending() {
+      return !(
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('migrationVersion', 0) >= 2
+      );
+    }
+
+    // Legacy Top-Level Collections: Strictly Read/Delete-Only until verified parity migration completes
     match /materials/{materialId} {
-      allow get: if isSignedIn() && isValidId(materialId) && existing().userId == request.auth.uid;
-      allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isVerifiedUser() && isValidId(materialId) &&
-        isValidStudyMaterial(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser() && isValidId(materialId) &&
-        isValidStudyMaterial(incoming()) &&
-        existing().userId == request.auth.uid &&
-        incoming().userId == existing().userId &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'title', 'chapter', 'currentPage', 'contentSummary', 'updatedAt'
-        ]);
-      allow delete: if isVerifiedUser() && isValidId(materialId) && existing().userId == request.auth.uid;
+      allow get, list, delete: if isSignedIn() && isValidId(materialId) && existing().userId == request.auth.uid && isLegacyMigrationPending();
+      allow create, update: if false;
     }
-
-    // 3. /tasks/{taskId}
     match /tasks/{taskId} {
-      allow get: if isSignedIn() && isValidId(taskId) && existing().userId == request.auth.uid;
-      allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isVerifiedUser() && isValidId(taskId) &&
-        isValidStudyTask(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser() && isValidId(taskId) &&
-        isValidStudyTask(incoming()) &&
-        existing().userId == request.auth.uid &&
-        incoming().userId == existing().userId &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'title', 'subject', 'dueLabel', 'completed', 'updatedAt'
-        ]);
-      allow delete: if isVerifiedUser() && isValidId(taskId) && existing().userId == request.auth.uid;
+      allow get, list, delete: if isSignedIn() && isValidId(taskId) && existing().userId == request.auth.uid && isLegacyMigrationPending();
+      allow create, update: if false;
     }
-
-    // 4. /creations/{creationId}
     match /creations/{creationId} {
-      allow get: if isSignedIn() && isValidId(creationId) && existing().userId == request.auth.uid;
-      allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isVerifiedUser() && isValidId(creationId) &&
-        isValidSavedCreation(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser() && isValidId(creationId) &&
-        isValidSavedCreation(incoming()) &&
-        existing().userId == request.auth.uid &&
-        incoming().userId == existing().userId &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'title', 'prompt', 'payload', 'updatedAt'
-        ]);
-      allow delete: if isVerifiedUser() && isValidId(creationId) && existing().userId == request.auth.uid;
+      allow get, list, delete: if isSignedIn() && isValidId(creationId) && existing().userId == request.auth.uid && isLegacyMigrationPending();
+      allow create, update: if false;
     }
-
-    // 5. /mockAttempts/{attemptId}
     match /mockAttempts/{attemptId} {
-      allow get: if isSignedIn() && isValidId(attemptId) && existing().userId == request.auth.uid;
-      allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isVerifiedUser() && isValidId(attemptId) &&
-        isValidMockAttempt(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser() && isValidId(attemptId) &&
-        isValidMockAttempt(incoming()) &&
-        existing().userId == request.auth.uid &&
-        incoming().userId == existing().userId &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'summaryReport', 'updatedAt'
-        ]);
-      allow delete: if isVerifiedUser() && isValidId(attemptId) && existing().userId == request.auth.uid;
+      allow get, list, delete: if isSignedIn() && isValidId(attemptId) && existing().userId == request.auth.uid && isLegacyMigrationPending();
+      allow create, update: if false;
     }
-
-    // 6. /revisions/{revisionId}
     match /revisions/{revisionId} {
-      allow get: if isSignedIn() && isValidId(revisionId) && existing().userId == request.auth.uid;
-      allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isVerifiedUser() && isValidId(revisionId) &&
-        isValidRevisionCard(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser() && isValidId(revisionId) &&
-        isValidRevisionCard(incoming()) &&
-        existing().userId == request.auth.uid &&
-        incoming().userId == existing().userId &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'title', 'body', 'trapOrTip', 'updatedAt'
-        ]);
-      allow delete: if isVerifiedUser() && isValidId(revisionId) && existing().userId == request.auth.uid;
+      allow get, list, delete: if isSignedIn() && isValidId(revisionId) && existing().userId == request.auth.uid && isLegacyMigrationPending();
+      allow create, update: if false;
     }
   }
 }

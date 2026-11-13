@@ -31,7 +31,7 @@ export function renderLatexSegment(latex: string, displayMode = false): string {
       displayMode,
       throwOnError: false,
       strict: false,
-      trust: true,
+      trust: false,
     });
   } catch {
     return latex;
@@ -64,7 +64,10 @@ export const MathRichText: React.FC<MathRichTextProps> = ({
       <div className={`leading-relaxed space-y-1.5 ${className}`}>
         <ReactMarkdown
           remarkPlugins={[remarkMath, remarkGfm]}
-          rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false, trust: true }]]}
+          rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false, trust: false }]]}
+          urlTransform={(url) =>
+            /^https?:\/\//i.test(url) || url.startsWith('#') || url.startsWith('/') ? url : ''
+          }
           components={{
             p: ({ children }) => <p className="leading-relaxed">{children}</p>,
             strong: ({ children }) => (
