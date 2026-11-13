@@ -9,8 +9,8 @@ import fs from 'node:fs';
  * 2) Live `@firebase/rules-unit-testing` suite when FIRESTORE_EMULATOR_HOST is running
  *    (Java JRE + Firebase Emulator CLI required).
  */
-const rulesText = fs.readFileSync(new URL('./firestore.rules', import.meta.url), 'utf8');
-const storageRulesText = fs.readFileSync(new URL('./storage.rules', import.meta.url), 'utf8');
+const rulesText = fs.readFileSync(new URL('./firestore.rules', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const storageRulesText = fs.readFileSync(new URL('./storage.rules', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 interface AuthContext {
   uid: string;
